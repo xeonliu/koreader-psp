@@ -37,8 +37,9 @@ if okffi then
     check("ffi struct", v.a .. "/" .. v.b .. "/" .. ffi.string(v.c) .. "/" .. ffi.sizeof("S"), "7/2.5/psp/24")
     local buf = ffi.new("uint8_t[16]") buf[3] = 200
     check("ffi array", buf[3], 200)
-    -- Known gap: calling C by name (ffi.C.xxx / ffi.load) needs a static symbol table on this OS.
-    local okc, err = pcall(function() return ffi.C.abs(-5) end)
-    print(okc and "PASS" or "TODO", "ffi.C symbol lookup", okc and "" or tostring(err))
+    ffi.cdef[[ int abs(int); int atoi(const char *); size_t strlen(const char *); ]]
+    check("ffi.C.abs", ffi.C.abs(-5), 5)
+    check("ffi.C.strlen", tonumber(ffi.C.strlen("hello")), 5)
+    check("ffi.load + atoi", ffi.load("c").atoi("1234"), 1234)
 end
 print(fails == 0 and "ALL CHECKS PASSED" or (fails .. " CHECK(S) FAILED"))

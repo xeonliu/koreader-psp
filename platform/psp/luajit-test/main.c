@@ -15,6 +15,17 @@ PSP_HEAP_SIZE_KB(-1024);
 
 extern const char test_lua[];
 
+/* Static symbol table for ffi.C / ffi.load (see LuaJIT's lj_clib.c PSP branch). Must be sorted in strcmp() order. */
+#include <stdlib.h>
+#include <string.h>
+struct lj_static_sym { const char *name; void *addr; };
+const struct lj_static_sym lj_static_symtab[] = {
+    { "abs", (void *)abs },
+    { "atoi", (void *)atoi },
+    { "strlen", (void *)strlen },
+    { NULL, NULL }
+};
+
 int main(void) {
     printf("LuaJIT PSP test starting\n");
     lua_State *L = luaL_newstate();
