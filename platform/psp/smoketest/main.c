@@ -3,6 +3,37 @@
  * It is NOT KOReader: it only checks the toolchain, output, input and EBOOT packaging.
  */
 #include <SDL3/SDL.h>
+#ifdef SMOKE_AUTOEXIT_MS
+#include <pspdisplay.h>
+#include <stdio.h>
+#include <stdint.h>
+/* Debug aid for automated screenshots: dump the PSP display frame buffer as a 24-bit BMP. */
+static void dump_framebuffer(const char *path) {
+    void *top = NULL; int bw = 0, fmt = 0;
+    sceDisplayGetFrameBuf(&top, &bw, &fmt, PSP_DISPLAY_SETBUF_IMMEDIATE);
+    if (!top) return;
+    FILE *f = fopen(path, "wb"); if (!f) return;
+    const int W = 480, H = 272, rowsz = W * 3;
+    uint32_t filesz = 54 + rowsz * H;
+    uint8_t hdr[54] = { 'B','M' }; hdr[2]=filesz; hdr[3]=filesz>>8; hdr[4]=filesz>>16; hdr[10]=54; hdr[14]=40;
+    hdr[18]=W&255; hdr[19]=W>>8; hdr[22]=H&255; hdr[23]=H>>8; hdr[26]=1; hdr[28]=24; hdr[34]=rowsz*H; hdr[35]=(rowsz*H)>>8; hdr[36]=(rowsz*H)>>16;
+    fwrite(hdr, 1, 54, f);
+    for (int y = H - 1; y >= 0; y--) {
+        uint8_t row[480 * 3];
+        for (int x = 0; x < W; x++) {
+            uint8_t r, g, b;
+            if (fmt == PSP_DISPLAY_PIXEL_FORMAT_8888) { uint32_t p = ((uint32_t *)top)[y * bw + x]; r = p; g = p >> 8; b = p >> 16; }
+            else { uint16_t p = ((uint16_t *)top)[y * bw + x];
+                   if (fmt == PSP_DISPLAY_PIXEL_FORMAT_565) { r = (p & 31) << 3; g = ((p >> 5) & 63) << 2; b = ((p >> 11) & 31) << 3; }
+                   else if (fmt == PSP_DISPLAY_PIXEL_FORMAT_5551) { r = (p & 31) << 3; g = ((p >> 5) & 31) << 3; b = ((p >> 10) & 31) << 3; }
+                   else { r = (p & 15) << 4; g = ((p >> 4) & 15) << 4; b = ((p >> 8) & 15) << 4; } }
+            row[x*3] = b; row[x*3+1] = g; row[x*3+2] = r;
+        }
+        fwrite(row, 1, rowsz, f);
+    }
+    fclose(f);
+}
+#endif
 #include <SDL3/SDL_main.h>
 #include <lua.h>
 #include <lauxlib.h>
@@ -76,6 +107,10 @@ int main(int argc, char *argv[]) {
     luaL_openlibs(L);
     luaL_newlib(L, psp_lib);
     lua_setglobal(L, "psp");
+#ifdef SMOKE_AUTOEXIT_MS
+    /* For automated screenshots: tell the script to quit by itself after this many ms. */
+    lua_pushinteger(L, SMOKE_AUTOEXIT_MS); lua_setglobal(L, "AUTOEXIT_MS");
+#endif
     if (luaL_dostring(L, smoketest_lua) != LUA_OK) {
         /* Show the error on screen instead of silently exiting. */
         const char *err = lua_tostring(L, -1);
@@ -88,6 +123,9 @@ int main(int argc, char *argv[]) {
             SDL_Delay(16);
         }
     }
+#ifdef SMOKE_AUTOEXIT_MS
+    dump_framebuffer("host0:/smoketest_screen.bmp");
+#endif
     lua_close(L);
     SDL_Quit();
     return 0;

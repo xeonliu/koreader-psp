@@ -5,6 +5,7 @@ local fps = 0
 while true do
     local i = psp.input()
     if i.start and i.select then return end -- Start+Select quits
+    if AUTOEXIT_MS and psp.ticks() > AUTOEXIT_MS then return end
     local dx = (i.right and 1 or 0) - (i.left and 1 or 0) + i.lx * 2
     local dy = (i.down and 1 or 0) - (i.up and 1 or 0) + i.ly * 2
     x = math.max(0, math.min(480 - 20, x + dx * 3))

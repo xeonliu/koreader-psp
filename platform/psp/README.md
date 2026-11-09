@@ -20,6 +20,9 @@ SDL3 (480x272) + SDL3 gamepad + embedded Lua 5.4, packed as `EBOOT.PBP`:
 Copy `EBOOT.PBP` to `ms0:/PSP/GAME/KOReaderSmoke/` (or open it in PPSSPP). It shows the pressed buttons, FPS, the Lua heap size,
 and a box you can move with the D-pad or analog stick. Start+Select quits.
 
+For automated screenshots, build with `CFLAGS="... -DSMOKE_AUTOEXIT_MS=3000"` (see `smoketest/main.c`). The app then dumps the PSP frame buffer to
+`host0:/smoketest_screen.bmp` and exits, so `ppsspp-headless EBOOT.PBP --root $PWD --graphics=software` produces the image.
+
 ## `koreader-base` PSP target
 
 `make TARGET=psp setup` in `koreader-base` configures the cross build (static/monolibtic, no SIMD, no PIC). zlib and libjpeg-turbo build.

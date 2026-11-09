@@ -57,3 +57,4 @@ i18n
 /platform/psp/luajit-test/PARAM.SFO
 /platform/psp/luajit-test/test_lua.c
 /platform/psp/luajit-test/DATA.PSP
+/platform/psp/smoketest/smoketest_screen.bmp
