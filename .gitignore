@@ -50,3 +50,10 @@ i18n
 /platform/psp/smoketest/PARAM.SFO
 /platform/psp/smoketest/smoketest_lua.c
 /platform/psp/smoketest/DATA.PSP
+/platform/psp/luajit-test/*.o
+/platform/psp/luajit-test/*.elf
+/platform/psp/luajit-test/*.prx
+/platform/psp/luajit-test/*.PBP
+/platform/psp/luajit-test/PARAM.SFO
+/platform/psp/luajit-test/test_lua.c
+/platform/psp/luajit-test/DATA.PSP
