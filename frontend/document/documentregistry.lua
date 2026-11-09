@@ -286,8 +286,11 @@ end
 
 -- load implementations:
 require("document/credocument"):register(DocumentRegistry)
-require("document/pdfdocument"):register(DocumentRegistry)
-require("document/djvudocument"):register(DocumentRegistry)
+-- PSP build: crengine (EPUB, FB2, TXT, HTML, ...) only. PDF (MuPDF) and DjVu are not built for the PSP.
+if not require("ffi/util").isPSP() then
+    require("document/pdfdocument"):register(DocumentRegistry)
+    require("document/djvudocument"):register(DocumentRegistry)
+end
 require("document/picdocument"):register(DocumentRegistry)
 -- auxiliary built-in
 require("ui/widget/imageviewer"):register(DocumentRegistry)

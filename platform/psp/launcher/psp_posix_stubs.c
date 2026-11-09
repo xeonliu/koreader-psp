@@ -167,3 +167,7 @@ int uname(struct ko_utsname *u) {
     strcpy(u->sysname, "PSP"); strcpy(u->nodename, "psp"); strcpy(u->release, "6.61"); strcpy(u->version, "1"); strcpy(u->machine, "allegrex");
     return 0;
 }
+
+/* newlib's glob() needs these; the PSP has no login sessions, so report nothing (not set-uid either). */
+char *getlogin(void) { errno = ENOSYS; return NULL; }
+int issetugid(void) { return 0; }

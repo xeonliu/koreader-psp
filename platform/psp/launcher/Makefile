@@ -9,11 +9,10 @@ STAGING := $(BUILD)/staging
 NM = psp-nm
 
 TARGET = koreader
-KO_OBJS := $(filter-out %/unpack.c.obj %/input.c.obj,$(shell find $(BUILD)/cmake/koreader -name '*.obj' 2>/dev/null))
+KO_OBJS := $(filter-out %/unpack.c.obj %/input.c.obj %/djvu.c.obj %/wrap-mupdf.c.obj,$(shell find $(BUILD)/cmake/koreader -name '*.obj' 2>/dev/null))
 STATIC_LIBS = \
   $(STAGING)/lib/libcrengine.a $(BUILD)/thirdparty/crengine/build/libcrengine.a \
-  $(STAGING)/lib/libk2pdfopt.a $(STAGING)/lib/libtesseract.a $(STAGING)/lib/libleptonica.a \
-  $(STAGING)/lib/libmupdf.a $(STAGING)/lib/libmupdf-third.a $(STAGING)/lib/libdjvulibre.a \
+  \
   $(STAGING)/lib/libharfbuzz.a $(STAGING)/lib/libfreetype.a $(STAGING)/lib/libfribidi.a $(STAGING)/lib/libunibreak.a \
   $(STAGING)/lib/libutf8proc.a $(STAGING)/lib/liblunasvg.a $(STAGING)/lib/libmd4c-html.a $(STAGING)/lib/libmd4c.a $(STAGING)/lib/libaes.a \
   $(STAGING)/lib/libarchive.a $(STAGING)/lib/liblzma.a $(STAGING)/lib/libzstd.a $(STAGING)/lib/libxxhash.a \

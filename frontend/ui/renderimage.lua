@@ -67,13 +67,50 @@ function RenderImage:renderImageData(data, size, want_frames, width, height)
         image = self:renderSVGImageDataWithCRengine(data, size, width, height)
     elseif buffer[0] == 0xff and buffer[1] == 0xd8 then
         image = self:renderJpegImageDataWithTurboJpeg(data, size, width, height)
+    elseif header == "\137PNG" then
+        logger.dbg("PNG file provided, renderImageData: using LodePNG")
+        image = self:renderPngImageDataWithLodepng(data, size, width, height)
     end
-    if not image then
-        -- fallback to rendering with MuPDF
+    if not image and not require("ffi/util").isPSP() then
+        -- fallback to rendering with MuPDF (not on the PSP: MuPDF is not built there)
         logger.dbg("renderImageData: using MuPDF")
         image = self:renderImageDataWithMupdf(data, size, width, height)
     end
     return image
+end
+
+--- Renders PNG image data as a BlitBuffer with LodePNG
+--
+-- @tparam data string with PNG bytes
+-- @int size size of data
+-- @int width requested width
+-- @int height requested height
+-- @treturn BlitBuffer
+function RenderImage:renderPngImageDataWithLodepng(data, size, width, height)
+    if not data or not size or size == 0 then
+        return
+    end
+    local Png = require("ffi/png")
+    local req_n = Device:hasColorScreen() and 3 or 1
+    local ok, decoded, re = pcall(Png.decodeFromData, ffi.string(data, size), req_n)
+    if not ok or not decoded then
+        logger.warn("failed rendering image (LodePNG):", ok and re or decoded)
+        return
+    end
+    local bbtype
+    if re.ncomp == 1 then bbtype = Blitbuffer.TYPE_BB8
+    elseif re.ncomp == 2 then bbtype = Blitbuffer.TYPE_BB8A
+    elseif re.ncomp == 3 then bbtype = Blitbuffer.TYPE_BBRGB24
+    elseif re.ncomp == 4 then bbtype = Blitbuffer.TYPE_BBRGB32
+    else
+        if re.data then ffi.C.free(re.data) end
+        return
+    end
+    local bb = Blitbuffer.new(re.width, re.height, bbtype, re.data)
+    bb:setAllocated(1)
+    local scaled = self:scaleBlitBuffer(bb, width, height, false)
+    if scaled ~= bb then bb:free() end
+    return scaled
 end
 
 --- Renders image data as a BlitBuffer with MuPDF
