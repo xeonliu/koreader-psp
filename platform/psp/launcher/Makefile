@@ -9,7 +9,7 @@ STAGING := $(BUILD)/staging
 NM = psp-nm
 
 TARGET = koreader
-KO_OBJS := $(shell find $(BUILD)/cmake/koreader -name '*.obj' 2>/dev/null)
+KO_OBJS := $(filter-out %/unpack.c.obj %/input.c.obj,$(shell find $(BUILD)/cmake/koreader -name '*.obj' 2>/dev/null))
 STATIC_LIBS = \
   $(STAGING)/lib/libcrengine.a $(BUILD)/thirdparty/crengine/build/libcrengine.a \
   $(STAGING)/lib/libk2pdfopt.a $(STAGING)/lib/libtesseract.a $(STAGING)/lib/libleptonica.a \
@@ -53,5 +53,6 @@ PSP_FW_VERSION = 661
 PSP_LARGE_MEMORY = 1
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = KOReader
+PSP_EBOOT_ICON = ICON0.PNG
 
 include $(PSPSDK)/lib/build.mak

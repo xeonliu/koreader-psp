@@ -12,7 +12,13 @@ link "$ko/resources/fonts" fonts
 link "$base/ffi" ffi
 # common/: the Lua libraries koreader-base builds, plus LuaSocket's pure-Lua modules and PSP stand-ins for its C cores.
 rm -rf "$stage/common"; mkdir -p "$stage/common/socket" "$stage/common/mime"
-for f in "$base"/build/psp/common/*; do ln -s "$f" "$stage/common/$(basename "$f")"; done
+for f in "$base"/build/psp/common/*; do
+    case "$(basename "$f")" in
+        # Network modules: the PSP port has no network (yet), so use the stand-ins below instead of the real ones.
+        socket|socket.lua|mime|mime.lua|ltn12.lua|ssl|ssl.lua|turbo|turbo.lua) continue ;;
+    esac
+    ln -s "$f" "$stage/common/$(basename "$f")"
+done
 lsrc="$base/build/psp/thirdparty/luasocket/source/src"
 cp "$lsrc/socket.lua" "$lsrc/ltn12.lua" "$lsrc/mime.lua" "$stage/common/"
 for f in url http ftp tp smtp headers; do cp "$lsrc/$f.lua" "$stage/common/socket/"; done
@@ -23,6 +29,6 @@ mkdir -p "$stage/data" "$stage/libs" "$stage/settings" "$stage/cache" "$stage/cl
 cp -f "$base/build/psp/data/ca-bundle.crt" "$stage/data/" 2>/dev/null || true
 mkdir -p "$stage/samples"
 for f in juliet.epub leaves.epub sample.pdf paper.pdf 2col.pdf djvu3spec.djvu sample.txt; do cp -f "$ko/test/$f" "$stage/samples/" 2>/dev/null || true; done
-echo "v2026.11-psp-dev" > "$stage/git-rev"
+echo "${KO_PSP_VERSION:-v2026.11-psp-dev}" > "$stage/git-rev"
 cp -f "$eboot" "$stage/EBOOT.PBP"
 echo "staged in $stage"

@@ -160,3 +160,10 @@ int getrusage(int who, struct rusage *ru) {
     ru->ru_utime.tv_sec = (time_t)(us / 1000000ULL); ru->ru_utime.tv_usec = (long)(us % 1000000ULL);
     return 0;
 }
+
+struct ko_utsname { char sysname[65], nodename[65], release[65], version[65], machine[65]; };
+int uname(struct ko_utsname *u) {
+    memset(u, 0, sizeof *u);
+    strcpy(u->sysname, "PSP"); strcpy(u->nodename, "psp"); strcpy(u->release, "6.61"); strcpy(u->version, "1"); strcpy(u->machine, "allegrex");
+    return 0;
+}
