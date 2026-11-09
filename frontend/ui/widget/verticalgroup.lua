@@ -1,15 +1,12 @@
---[[--
-A layout widget that puts objects under each other.
---]]
-
-local BD = require("ui/bidi")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 
-local VerticalGroup = WidgetContainer:extend{
+--[[
+A Layout widget that puts objects under each other
+--]]
+local VerticalGroup = WidgetContainer:new{
     align = "center",
-    allow_mirroring = true,
     _size = nil,
-    _offsets = {},
+    _offsets = {}
 }
 
 function VerticalGroup:getSize()
@@ -33,23 +30,15 @@ end
 
 function VerticalGroup:paintTo(bb, x, y)
     local size = self:getSize()
-    local align = self.align
-    if BD.mirroredUILayout() and self.allow_mirroring then
-        if align == "left" then
-            align = "right"
-        elseif align == "right" then
-            align = "left"
-        end
-    end
 
     for i, widget in ipairs(self) do
-        if align == "center" then
+        if self.align == "center" then
             widget:paintTo(bb,
                 x + math.floor((size.w - self._offsets[i].x) / 2),
                 y + self._offsets[i].y)
-        elseif align == "left" then
+        elseif self.align == "left" then
             widget:paintTo(bb, x, y + self._offsets[i].y)
-        elseif align == "right" then
+        elseif self.align == "right" then
             widget:paintTo(bb,
                 x + size.w - self._offsets[i].x,
                 y + self._offsets[i].y)
@@ -59,8 +48,7 @@ end
 
 function VerticalGroup:clear()
     self:free()
-    -- Skip WidgetContainer:clear's free call, we just did that in our own free ;)
-    WidgetContainer.clear(self, true)
+    WidgetContainer.clear(self)
 end
 
 function VerticalGroup:resetLayout()
@@ -69,7 +57,6 @@ function VerticalGroup:resetLayout()
 end
 
 function VerticalGroup:free()
-    --print("VerticalGroup:free on", self)
     self:resetLayout()
     WidgetContainer.free(self)
 end

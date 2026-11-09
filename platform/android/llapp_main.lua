@@ -1,32 +1,28 @@
-local android = require("android")
-
--- setup Lua paths, and ffi helper / override
-require("setupkoenv")
-
-local lfs = require("libs/libkoreader-lfs")
-local ffi = require("ffi")
-local dummy = require("ffi/posix_h")
-local C = ffi.C
+local A = require("android")
+A.dl.library_path = A.dl.library_path .. ":" .. A.dir .. "/libs"
 
 -- check uri of the intent that starts this application
-local file = android.getIntent()
-
-if file ~= nil then
-    android.LOGI("intent file path " .. file)
-end
-
--- path to primary external storage partition
-local path = android.getExternalStoragePath()
-
--- Set $FONTDIR to android.dir/fonts so MuPDF can find its fonts.
-C.setenv("FONTDIR", android.dir .. "/fonts", 1)
+local file = A.jni:context(A.app.activity.vm, function(JNI)
+    local uri = JNI:callObjectMethod(
+        JNI:callObjectMethod(
+            A.app.activity.clazz,
+            "getIntent",
+            "()Landroid/content/Intent;"
+        ),
+        "getData",
+        "()Landroid/net/Uri;"
+    )
+    if uri ~= nil then
+        local path = JNI:callObjectMethod(
+            uri,
+            "getPath",
+            "()Ljava/lang/String;"
+        )
+        return JNI:to_string(path)
+    end
+end)
+A.LOGI("intent file path " .. (file or ""))
 
 -- create fake command-line arguments
--- luacheck: ignore 121
-if android.isDebuggable() then
-    arg = {"-d", file}
-else
-    arg = {file}
-end
-
-dofile(android.dir.."/reader.lua")
+arg = {"-d", file or "/sdcard"}
+dofile(A.dir.."/reader.lua")

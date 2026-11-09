@@ -1,23 +1,87 @@
-local BBoxWidget = require("ui/widget/bboxwidget")
-local Blitbuffer = require("ffi/blitbuffer")
-local ButtonTable = require("ui/widget/buttontable")
-local CenterContainer = require("ui/widget/container/centercontainer")
-local Event = require("ui/event")
-local FrameContainer = require("ui/widget/container/framecontainer")
-local Geom = require("ui/geometry")
-local Math = require("optmath")
+local InputContainer = require("ui/widget/container/inputcontainer")
 local UIManager = require("ui/uimanager")
-local WidgetContainer = require("ui/widget/container/widgetcontainer")
+local Geom = require("ui/geometry")
+local Event = require("ui/event")
+local Screen = require("device").screen
+local LeftContainer = require("ui/widget/container/leftcontainer")
+local RightContainer = require("ui/widget/container/rightcontainer")
+local FrameContainer = require("ui/widget/container/framecontainer")
 local VerticalGroup = require("ui/widget/verticalgroup")
-local Device = require("device")
-local Screen = Device.screen
-local _ = require("gettext")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
+local BBoxWidget = require("ui/widget/bboxwidget")
+local HorizontalSpan = require("ui/widget/horizontalspan")
+local Button = require("ui/widget/button")
+local Math = require("optmath")
+local DEBUG = require("dbg")
+local Blitbuffer = require("ffi/blitbuffer")
 
-local ReaderCropping = WidgetContainer:extend{}
+local PageCropDialog = VerticalGroup:new{
+    ok_text = "OK",
+    cancel_text = "Cancel",
+    ok_callback = function() end,
+    cancel_callback = function() end,
+    button_width = math.floor(Screen:scaleBySize(70)),
+}
+
+function PageCropDialog:init()
+    local horizontal_group = HorizontalGroup:new{}
+    local ok_button = Button:new{
+        text = self.ok_text,
+        callback = self.ok_callback,
+        width = self.button_width,
+        bordersize = 2,
+        radius = 7,
+        text_font_face = "cfont",
+        text_font_size = 20,
+        show_parent = self,
+    }
+    local cancel_button = Button:new{
+        text = self.cancel_text,
+        callback = self.cancel_callback,
+        width = self.button_width,
+        bordersize = 2,
+        radius = 7,
+        text_font_face = "cfont",
+        text_font_size = 20,
+        show_parent = self,
+    }
+    local ok_container = RightContainer:new{
+        dimen = Geom:new{ w = Screen:getWidth()*0.33, h = Screen:getHeight()/12},
+        ok_button,
+    }
+    local cancel_container = LeftContainer:new{
+        dimen = Geom:new{ w = Screen:getWidth()*0.33, h = Screen:getHeight()/12},
+        cancel_button,
+    }
+    table.insert(horizontal_group, ok_container)
+    table.insert(horizontal_group, HorizontalSpan:new{ width = Screen:getWidth()*0.34})
+    table.insert(horizontal_group, cancel_container)
+    self[2] = FrameContainer:new{
+        horizontal_group,
+        background = Blitbuffer.COLOR_WHITE,
+        bordersize = 0,
+        padding = 0,
+    }
+end
+
+function PageCropDialog:onCloseWidget()
+    UIManager:setDirty(nil, function()
+        return "partial", self[1].dimen:combine(self[2].dimen)
+    end)
+    return true
+end
+
+function PageCropDialog:onShow()
+    UIManager:setDirty(self, function()
+        return "partial", self[1].dimen:combine(self[2].dimen)
+    end)
+    return true
+end
+
+local ReaderCropping = InputContainer:new{}
 
 function ReaderCropping:onPageCrop(mode)
     self.ui:handleEvent(Event:new("CloseConfigMenu"))
-
     -- backup original zoom mode as cropping use "page" zoom mode
     self.orig_zoom_mode = self.view.zoom_mode
     if mode == "auto" then
@@ -25,17 +89,12 @@ function ReaderCropping:onPageCrop(mode)
             self:setCropZoomMode(true)
         end
         return
-    elseif mode == "none" then
-        return
     end
     -- backup original view dimen
     self.orig_view_dimen = Geom:new{w = self.view.dimen.w, h = self.view.dimen.h}
     -- backup original view bgcolor
     self.orig_view_bgcolor = self.view.outer_page_color
-    self.view.outer_page_color = Blitbuffer.COLOR_DARK_GRAY
-    -- backup original footer visibility
-    self.orig_view_footer_visibility = self.view.footer_visible
-    self.view.footer_visible = false
+    self.view.outer_page_color = Blitbuffer.gray(0.5) -- gray bgcolor
     -- backup original page scroll
     self.orig_page_scroll = self.view.page_scroll
     self.view.page_scroll = false
@@ -49,61 +108,21 @@ function ReaderCropping:onPageCrop(mode)
         -- mode, just force readerview to recalculate visible_area
         self.view:recalculate()
     else
-        self.ui:handleEvent(Event:new("SetZoomMode", "page"))
+        self.ui:handleEvent(Event:new("SetZoomMode", "page", "cropping"))
     end
-
-    -- prepare bottom buttons so we know the size available for the page above it
-    local button_table = ButtonTable:new{
-        width = Screen:getWidth(),
-        buttons = {{
-            {
-                text = _("Cancel"),
-                callback = function() self:onCancelPageCrop() end,
-            },
-            {
-                text = _("Apply crop"),
-                callback = function() self:onConfirmPageCrop() end,
-            },
-        }},
-        zero_sep = true,
-        show_parent = self,
-    }
-    local button_container = FrameContainer:new{
-        margin = 0,
-        bordersize = 0,
-        padding = 0,
-        background = Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{
-                w = Screen:getWidth(),
-                h = button_table:getSize().h,
-            },
-            button_table,
-        }
-    }
-    -- height available for page
-    local page_container_h = Screen:getHeight()
-    if Device:isTouchDevice() then
-        -- non-touch devices do not need cancel and apply buttons
-        page_container_h = page_container_h - button_table:getSize().h
-    end
-    local page_dimen = Geom:new{
-        w = Screen:getWidth(),
-        h = page_container_h,
-    }
-    -- resize document view to the available size
-    self.ui:handleEvent(Event:new("SetDimensions", page_dimen))
-
-    -- finalize crop dialog
+    self.ui:handleEvent(Event:new("SetDimensions",
+        Geom:new{w = Screen:getWidth(), h = Screen:getHeight()*11/12})
+    )
     self.bbox_widget = BBoxWidget:new{
+        crop = self,
         ui = self.ui,
         view = self.view,
         document = self.document,
     }
-    self.crop_dialog = VerticalGroup:new{
-        align = "left",
+    self.crop_dialog = PageCropDialog:new{
         self.bbox_widget,
-        (Device:isTouchDevice() and button_container) or nil, -- button bar only available for touch devices
+        ok_callback = function() self:onConfirmPageCrop() end,
+        cancel_callback = function() self:onCancelPageCrop() end,
     }
     UIManager:show(self.crop_dialog)
     return true
@@ -132,8 +151,6 @@ function ReaderCropping:exitPageCrop(confirmed)
     self.ui:handleEvent(Event:new("RestoreHinting"))
     -- restore page scroll
     self.view.page_scroll = self.orig_page_scroll
-    -- restore footer visibility
-    self.view.footer_visible = self.orig_view_footer_visibility
     -- restore view bgcolor
     self.view.outer_page_color = self.orig_view_bgcolor
     -- restore reflow mode
@@ -151,25 +168,17 @@ end
 
 function ReaderCropping:setCropZoomMode(confirmed)
     if confirmed then
-        -- if original zoom mode is "page???", set zoom mode to "content???"
-        local zoom_mode_type = self.orig_zoom_mode:match("page(.*)")
-        self:setZoomMode(zoom_mode_type
-                    and "content"..zoom_mode_type
-                    or self.orig_zoom_mode)
+        -- if original zoom mode is not "content", set zoom mode to "contentwidth"
+        self.ui:handleEvent(Event:new("SetZoomMode",
+            self.orig_zoom_mode:find("content") and self.orig_zoom_mode or "contentwidth"))
         self.ui:handleEvent(Event:new("InitScrollPageStates"))
     else
-        self:setZoomMode(self.orig_zoom_mode)
+        self.ui:handleEvent(Event:new("SetZoomMode", self.orig_zoom_mode))
     end
-end
-
-function ReaderCropping:setZoomMode(mode)
-    self.ui:handleEvent(Event:new("SetZoomMode", mode))
 end
 
 function ReaderCropping:onReadSettings(config)
-    if config:has("bbox") then
-        self.document.bbox = config:readSetting("bbox")
-    end
+    self.document.bbox = config:readSetting("bbox")
 end
 
 function ReaderCropping:onSaveSettings()

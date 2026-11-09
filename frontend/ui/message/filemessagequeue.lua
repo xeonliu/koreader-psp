@@ -1,11 +1,14 @@
 local ffi = require("ffi")
-local logger = require("logger")
+local DEBUG = require("dbg")
+local util = require("ffi/util")
+local Event = require("ui/event")
 local MessageQueue = require("ui/message/messagequeue")
-local _ = require("ffi/zeromq_h")
-local czmq = ffi.loadlib("czmq", "4")
-local filemq = ffi.loadlib("fmq", "1")
 
-local FileMessageQueue = MessageQueue:extend{
+local dummy = require("ffi/zeromq_h")
+local czmq = ffi.load("libs/libczmq.so.1")
+local filemq = ffi.load("libs/libfmq.so.1")
+
+local FileMessageQueue = MessageQueue:new{
     client = nil,
     server = nil,
 }
@@ -16,21 +19,21 @@ function FileMessageQueue:init()
         self.filemq = self.client
         self.poller = czmq.zpoller_new(filemq.fmq_client_handle(self.client), nil)
     elseif self.server ~= nil then
-        --- @todo currently fmq_server_recv API is not available
+        -- TODO: currently fmq_server_recv API is not available
         --self.fmq_recv = filemq.fmq_server_recv
         self.filemq = self.server
-        --- @todo currently fmq_server_handle API is not available
+        -- TODO: currently fmq_server_handle API is not available
         --self.poller = czmq.zpoller_new(filemq.fmq_server_handle(self.server), nil)
     end
 end
 
 function FileMessageQueue:stop()
     if self.client ~= nil then
-        logger.dbg("stop filemq client")
+        DEBUG("stop filemq client")
         filemq.fmq_client_destroy(ffi.new('fmq_client_t *[1]', self.client))
     end
     if self.server ~= nil then
-        logger.dbg("stop filemq server")
+        DEBUG("stop filemq server")
         filemq.fmq_server_destroy(ffi.new('fmq_server_t *[1]', self.server))
     end
     if self.poller ~= nil then

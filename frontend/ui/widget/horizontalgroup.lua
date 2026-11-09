@@ -1,25 +1,17 @@
---[[--
-A layout widget that puts objects besides each other.
---]]
-
-local BD = require("ui/bidi")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
-local util = require("util")
 
-local HorizontalGroup = WidgetContainer:extend{
+--[[
+A Layout widget that puts objects besides each others
+--]]
+local HorizontalGroup = WidgetContainer:new{
     align = "center",
-    allow_mirroring = true,
     _size = nil,
 }
 
 function HorizontalGroup:getSize()
     if not self._size then
-        local _mirroredUI = BD.mirroredUILayout()
         self._size = { w = 0, h = 0 }
         self._offsets = { }
-        if _mirroredUI and self.allow_mirroring then
-            util.arrayReverse(self)
-        end
         for i, widget in ipairs(self) do
             local w_size = widget:getSize()
             self._offsets[i] = {
@@ -31,20 +23,13 @@ function HorizontalGroup:getSize()
                 self._size.h = w_size.h
             end
         end
-        if _mirroredUI and self.allow_mirroring then
-            util.arrayReverse(self)
-        end
     end
     return self._size
 end
 
 function HorizontalGroup:paintTo(bb, x, y)
     local size = self:getSize()
-    local _mirroredUI = BD.mirroredUILayout()
 
-    if _mirroredUI and self.allow_mirroring then
-        util.arrayReverse(self)
-    end
     for i, widget in ipairs(self) do
         if self.align == "center" then
             widget:paintTo(bb,
@@ -54,20 +39,13 @@ function HorizontalGroup:paintTo(bb, x, y)
             widget:paintTo(bb, x + self._offsets[i].x, y)
         elseif self.align == "bottom" then
             widget:paintTo(bb, x + self._offsets[i].x, y + size.h - self._offsets[i].y)
-        else
-            io.stderr:write("[!] invalid alignment for HorizontalGroup: ",
-                            self.align)
         end
-    end
-    if _mirroredUI and self.allow_mirroring then
-        util.arrayReverse(self)
     end
 end
 
 function HorizontalGroup:clear()
     self:free()
-    -- Skip WidgetContainer:clear's free call, we just did that in our own free ;)
-    WidgetContainer.clear(self, true)
+    WidgetContainer.clear(self)
 end
 
 function HorizontalGroup:resetLayout()
@@ -76,7 +54,6 @@ function HorizontalGroup:resetLayout()
 end
 
 function HorizontalGroup:free()
-    --print("HorizontalGroup:free on", self)
     self:resetLayout()
     WidgetContainer.free(self)
 end

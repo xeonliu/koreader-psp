@@ -1,15 +1,11 @@
---[[--
-Widget that displays a line.
-]]
-
-local Blitbuffer = require("ffi/blitbuffer")
 local Widget = require("ui/widget/widget")
+local Blitbuffer = require("ffi/blitbuffer")
 
-local LineWidget = Widget:extend{
+local LineWidget = Widget:new{
     style = "solid",
     background = Blitbuffer.COLOR_BLACK,
     dimen = nil,
-    --- @todo Replay dirty hack here  13.03 2013 (houqp).
+    --@TODO replay dirty hack here  13.03 2013 (houqp)
     empty_segments = nil,
 }
 
@@ -23,13 +19,13 @@ function LineWidget:paintTo(bb, x, y)
     else
         if self.empty_segments then
             bb:paintRect(x, y,
-                         self.empty_segments[1].s,
-                         self.dimen.h,
-                         self.background)
+                        self.empty_segments[1].s,
+                        self.dimen.h,
+                        self.background)
             bb:paintRect(x + self.empty_segments[1].e, y,
-                         self.dimen.w - x - self.empty_segments[1].e,
-                         self.dimen.h,
-                         self.background)
+                        self.dimen.w - x - self.empty_segments[1].e,
+                        self.dimen.h,
+                        self.background)
         else
             bb:paintRect(x, y, self.dimen.w, self.dimen.h, self.background)
         end

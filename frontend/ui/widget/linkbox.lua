@@ -1,17 +1,16 @@
-local Blitbuffer = require("ffi/blitbuffer")
-local Device = require("device")
-local Geom = require("ui/geometry")
-local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
-local Size = require("ui/size")
+local GestureRange = require("ui/gesturerange")
 local UIManager = require("ui/uimanager")
-local Screen = Device.screen
+local Screen = require("device").screen
+local Geom = require("ui/geometry")
+local Device = require("device")
+local Blitbuffer = require("ffi/blitbuffer")
 
-local LinkBox = InputContainer:extend{
+local LinkBox = InputContainer:new{
     box = nil,
-    color = Blitbuffer.COLOR_DARK_GRAY,
+    color = Blitbuffer.gray(0.5),
     radius = 0,
-    bordersize = Size.line.medium,
+    bordersize = 2,
 }
 
 function LinkBox:init()
@@ -38,11 +37,12 @@ function LinkBox:onCloseWidget()
     UIManager:setDirty(nil, function()
         return "partial", self.box
     end)
+    return true
 end
 
 function LinkBox:onShow()
     UIManager:setDirty(self, function()
-        return "ui", self.box
+        return "partial", self.box
     end)
     if self.timeout then
         UIManager:scheduleIn(self.timeout, function()
@@ -60,3 +60,4 @@ function LinkBox:onTapClose()
 end
 
 return LinkBox
+

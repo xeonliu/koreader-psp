@@ -1,29 +1,27 @@
+local isAndroid, android = pcall(require, "android")
 local util = require("ffi/util")
-local Version = require("version")
 
 local function probeDevice()
-    local platform = Version:getCurrentPlatform()
-    if platform then
-        if platform:sub(1, #"android") == "android" then
-            return require("device/android/device")
-        elseif platform:sub(1, #"bookeen") == "bookeen" then
-            return require("device/bookeen/device")
-        elseif platform:sub(1, #"cervantes") == "cervantes" then
-            return require("device/cervantes/device")
-        elseif platform:sub(1, #"kindle") == "kindle" then
-            return require("device/kindle/device")
-        elseif platform:sub(1, #"kobo") == "kobo" then
-            return require("device/kobo/device")
-        elseif platform:sub(1, #"pocketbook") == "pocketbook" then
-            return require("device/pocketbook/device")
-        elseif platform:sub(1, #"remarkable") == "remarkable" then
-            return require("device/remarkable/device")
-        end
+    if util.isEmulated() then
+        return require("device/emulator/device")
     end
-    if util.loadSDL3() then
-        return require("device/sdl/device")
+
+    if isAndroid then
+        return require("device/android/device")
     end
-    error("Could not find hardware abstraction for this platform. If you are trying to run the emulator, please ensure SDL is installed.")
+
+    local kindle_sn = io.open("/proc/usid", "r")
+    if kindle_sn then
+        kindle_sn:close()
+        return require("device/kindle/device")
+    end
+
+    local kg_test_fd = lfs.attributes("/bin/kobo_config.sh")
+    if kg_test_fd then
+        return require("device/kobo/device")
+    end
+
+    error("did not find a hardware abstraction for this platform")
 end
 
 local dev = probeDevice()

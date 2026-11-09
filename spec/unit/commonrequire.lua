@@ -1,89 +1,45 @@
--- turn off debug by default and set log level to warning
-require("dbg"):turnOff()
-local logger = require("logger")
-logger:setLevel(logger.levels.warn)
-
-local DataStorage = require("datastorage")
-require("libs/libkoreader-lfs").mkdir(DataStorage:getHistoryDir()) -- for legacy history tests
-
--- global defaults
-os.remove(DataStorage:getDataDir() .. "/defaults.tests.lua")
-os.remove(DataStorage:getDataDir() .. "/defaults.tests.lua.old")
-G_defaults = require("luadefaults"):open(DataStorage:getDataDir() .. "/defaults.tests.lua")
+require "defaults"
+package.path = "?.lua;common/?.lua;frontend/?.lua;" .. package.path
+package.cpath = "?.so;common/?.so;/usr/lib/lua/?.so;" .. package.cpath
 
 -- global reader settings
-os.remove(DataStorage:getDataDir() .. "/settings.tests.lua")
-os.remove(DataStorage:getDataDir() .. "/settings.tests.lua.old")
-G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.tests.lua")
-G_reader_settings:saveSetting("document_metadata_folder", "dir")
+local DocSettings = require("docsettings")
+G_reader_settings = DocSettings:open(".reader")
 
 -- global einkfb for Screen (do not show SDL window)
-einkfb = require("ffi/framebuffer") --luacheck: ignore
-einkfb.dummy = true --luacheck: ignore
-
-local Device = require("device")
+einkfb = require("ffi/framebuffer")
+einkfb.dummy = true
 
 -- init output device
-local Screen = Device.screen
+local Screen = require("device").screen
 Screen:init()
 
-local CanvasContext = require("document/canvascontext")
-CanvasContext:init(Device)
-
 -- init input device (do not show SDL window)
-local Input = Device.input
+local Input = require("device").input
 Input.dummy = true
 
-package.unload = function(module)
-    if type(module) ~= "string" then return false end
-    package.loaded[module] = nil
-    _G[module] = nil
-    return true
-end
+-- turn on debug
+local DEBUG = require("dbg")
+--DEBUG:turnOn()
 
-package.replace = function(name, module)
-    if type(name) ~= "string" then return false end
-    assert(package.unload(name))
-    package.loaded[name] = module
-    return true
-end
-
-package.reload = function(name)
-    if type(name) ~= "string" then return false end
-    assert(package.unload(name))
-    return require(name)
-end
-
-function disable_plugins()
-    local PluginLoader = require("pluginloader")
-    PluginLoader.enabled_plugins = {}
-    PluginLoader.disabled_plugins = {}
-    PluginLoader.loaded_plugins = {}
-end
-
-function load_plugin(name)
-    local PluginLoader = require("pluginloader")
-    local t = PluginLoader:_discover()
-    local plugin_id = name:gsub("%.koplugin$", "")
-    for _, v in ipairs(t) do
-        if v.name == plugin_id then
-            PluginLoader:_load{v}
-            return
-        end
+-- remove debug hooks in wrapped function for better luacov performance
+if LUACOV then
+    local function hook_free_call(callback)
+        local hook, mask, count = debug.gethook()
+        debug.sethook()
+        local res = callback()
+        debug.sethook(hook, mask)
+        return res
     end
-    assert(false)
-end
 
-function fastforward_ui_events()
     local UIManager = require("ui/uimanager")
-    -- Fast forward all scheduled tasks.
-    UIManager:shiftScheduledTasksBy(-1e9)
-    -- Fix hang when running tests with our docker base image SDL.
-    UIManager:setInputTimeout(0)
-    -- And run the UI manager's input loop once.
-    UIManager:handleInput()
-end
+    local uimanager_run = UIManager.run
+    function UIManager:run()
+        hook_free_call(function() return uimanager_run(UIManager) end)
+    end
 
-function screenshot(screen, filename)
-    screen:shot(DataStorage:getDataDir() .. "/screenshots/" .. filename)
+    local screen_shot = Screen.shot
+    function Screen:shot(filename)
+        hook_free_call(function() return screen_shot(Screen, filename) end)
+    end
 end

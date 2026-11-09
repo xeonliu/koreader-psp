@@ -1,8 +1,9 @@
 local InputContainer = require("ui/widget/container/inputcontainer")
 local Device = require("device")
+local DEBUG = require("dbg")
 local _ = require("gettext")
 
-local ReaderPanning = InputContainer:extend{
+local ReaderPanning = InputContainer:new{
     -- defaults
     panning_steps = {
         normal = 50,
@@ -13,49 +14,37 @@ local ReaderPanning = InputContainer:extend{
 }
 
 function ReaderPanning:init()
-    self:registerKeyEvents()
-    -- NOP our own gesture handling
-    self.ges_events = nil
-end
-
-function ReaderPanning:onGesture() end
-
-function ReaderPanning:registerKeyEvents()
-    if Device:hasKeyboard() and Device:hasDPad() and not Device:useDPadAsActionKeys() then
+    if Device:isTouchDevice() then
+    else
         self.key_events = {
             -- these will all generate the same event, just with different arguments
             MoveUp = {
-                { "Up" },
-                event = "Panning",
-                args = {0, -1}
-            },
+                { "Up" }, doc = "move visible area up",
+                event = "Panning", args = {0, -1} },
             MoveDown = {
-                { "Down" },
-                event = "Panning",
-                args = {0,  1}
-            },
+                { "Down" }, doc = "move visible area down",
+                event = "Panning", args = {0,  1} },
             MoveLeft = {
-                { "Left" },
-                event = "Panning",
-                args = {-1, 0}
-            },
+                { "Left" }, doc = "move visible area left",
+                event = "Panning", args = {-1, 0} },
             MoveRight = {
-                { "Right" },
-                event = "Panning",
-                args = {1,  0}
-            },
+                { "Right" }, doc = "move visible area right",
+                event = "Panning", args = {1,  0} },
         }
     end
 end
 
-ReaderPanning.onPhysicalKeyboardConnected = ReaderPanning.registerKeyEvents
+function ReaderPanning:onSetDimensions(dimensions)
+    self.dimen = dimensions
+end
 
-function ReaderPanning:onPanning(args, _)
+function ReaderPanning:onPanning(args, key)
     local dx, dy = unpack(args)
+    DEBUG("key =", key)
     -- for now, bounds checking/calculation is done in the view
     self.view:PanningUpdate(
-        dx * self.panning_steps.normal * self.view.visible_area.w * (1/100),
-        dy * self.panning_steps.normal * self.view.visible_area.h * (1/100))
+        dx * self.panning_steps.normal * self.dimen.w / 100,
+        dy * self.panning_steps.normal * self.dimen.h / 100)
     return true
 end
 
