@@ -24,15 +24,19 @@ and a box you can move with the D-pad or analog stick. Start+Select quits.
 
 `make TARGET=psp setup` in `koreader-base` configures the cross build (static/monolibtic, no SIMD, no PIC). zlib and libjpeg-turbo build.
 
-## Blocker: LuaJIT
+## LuaJIT (Plan A): builds, untested
 
-KOReader relies on LuaJIT's FFI everywhere, but LuaJIT does not support the PSP CPU/ABI:
+KOReader relies on LuaJIT's FFI everywhere, and LuaJIT does not support the PSP out of the box
+(`#error "Only o32 ABI supported for MIPS32"`; psp-gcc targets MIPS EABI; the Allegrex FPU is single-precision only).
+`koreader-base/thirdparty/luajit/psp-eabi-softfp.patch` accepts the ABI, forces LuaJIT's soft-float mode and no-ops the cache sync.
+It is built as a static interpreter: JIT disabled, system allocator, FFI enabled (`LJ_HASFFI=1`).
 
-* `lj_arch.h`: `#error "Only o32 ABI supported for MIPS32"` (psp-gcc targets MIPS EABI).
-* Its assembly VM (`vm_mips.dasc`) assumes a double-precision FPU; the Allegrex FPU is single-precision only.
+`luajit-test/` is a console-only EBOOT that runs `test.lua` (arithmetic, strings, `bit`, a timing loop and FFI structs/calls) on it:
 
-Options, roughly in order of preference:
+    (cd koreader-base && make TARGET=psp && cd build/psp/cmake && ninja luajit)
+    cd luajit-test && make STAGING=/path/to/koreader-base/build/psp/staging
 
-1. Run KOReader's Lua on PUC Lua 5.1/5.4 and provide a LuaJIT-compatible `ffi` module (e.g. cffi-lua + a libffi port for MIPS EABI, or a purpose-built static binding layer).
-2. Port the LuaJIT interpreter VM to the Allegrex (large; the JIT would stay disabled).
-3. Reduce scope: a native (C) reader front end with Lua only for UI logic.
+**It has been compiled and linked but NOT run.** Run it in PPSSPP or on hardware and check the output. Open questions:
+does the VM use any instruction the Allegrex lacks (EABI vs o32 calling sequences inside `vm_mips.dasc`), and is soft-float speed acceptable?
+
+Fallbacks if it does not run: PUC Lua with a LuaJIT-compatible `ffi` module, or porting the interpreter VM to the Allegrex.
