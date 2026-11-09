@@ -41,3 +41,11 @@ i18n
 /.cproject
 /.project
 .gitignore~
+
+# PSP smoke test build outputs
+/platform/psp/smoketest/*.o
+/platform/psp/smoketest/*.elf
+/platform/psp/smoketest/*.prx
+/platform/psp/smoketest/*.PBP
+/platform/psp/smoketest/PARAM.SFO
+/platform/psp/smoketest/smoketest_lua.c
