@@ -49,3 +49,4 @@ i18n
 /platform/psp/smoketest/*.PBP
 /platform/psp/smoketest/PARAM.SFO
 /platform/psp/smoketest/smoketest_lua.c
+/platform/psp/smoketest/DATA.PSP
