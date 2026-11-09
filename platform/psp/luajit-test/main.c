@@ -18,10 +18,17 @@ extern const char test_lua[];
 /* Static symbol table for ffi.C / ffi.load (see LuaJIT's lj_clib.c PSP branch). Must be sorted in strcmp() order. */
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+/* Float-argument test functions (hard-float single EABI: floats in FPRs). */
+float ko_fmix(int a, float b, int c, float d) { return (float)a + b * 2.0f + (float)c * 4.0f + d * 8.0f; }
+double ko_dmix(int a, double b) { return (double)a + b; }
 struct lj_static_sym { const char *name; void *addr; };
 const struct lj_static_sym lj_static_symtab[] = {
     { "abs", (void *)abs },
     { "atoi", (void *)atoi },
+    { "ko_dmix", (void *)ko_dmix },
+    { "ko_fmix", (void *)ko_fmix },
+    { "snprintf", (void *)snprintf },
     { "strlen", (void *)strlen },
     { NULL, NULL }
 };

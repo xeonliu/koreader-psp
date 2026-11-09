@@ -27,26 +27,59 @@ For automated screenshots, build with `CFLAGS="... -DSMOKE_AUTOEXIT_MS=3000"` (s
 
 `make TARGET=psp setup` in `koreader-base` configures the cross build (static/monolibtic, no SIMD, no PIC). zlib and libjpeg-turbo build.
 
-## LuaJIT (Plan A): runs in PPSSPP (emulator only; not tested on hardware)
+## KOReader on the PSP (`launcher/`)
 
-KOReader relies on LuaJIT's FFI everywhere, and LuaJIT does not support the PSP out of the box (MIPS EABI, single-precision FPU).
-`koreader-base/thirdparty/luajit/psp-eabi-softfp.patch` makes it work as a static, soft-float interpreter (JIT off, FFI on):
+`launcher/` builds the real thing: one `EBOOT.PBP` (~27 MB) holding a static LuaJIT, KOReader's own Lua (`reader.lua` and friends),
+and every C dependency (FreeType, HarfBuzz, MuPDF, CREngine, DjVuLibre, k2pdfopt/Leptonica/Tesseract, libarchive, sqlite, ...).
+SDL3 (pspdev's) provides the 480x272 screen and the gamepad; KOReader's existing SDL device code is reused unchanged.
+
+    # 1. koreader-base: toolchain + all thirdparty libraries (needs pspdev in PATH, PSPDEV set)
+    cd koreader-base && make TARGET=psp setup && (cd build/psp/cmake && ninja -k0 all)
+    #    (if GitHub tarball downloads are blocked: utils/fetch-git-archives.sh + KO_LOCAL_ARCHIVES, see its header)
+    # 2. launcher EBOOT
+    cd koreader-psp/platform/psp/launcher && make BASE=/path/to/koreader-base
+    # 3. KOReader's Lua tree + fonts + sample documents next to the EBOOT
+    ../stage.sh /path/to/stage /path/to/koreader-base
+
+Copy the stage directory to `ms0:/PSP/GAME/KOReader/` (or run it with `ppsspp-headless EBOOT.PBP --root STAGE`).
+
+Development switches for `make` (see `launcher/Makefile`): `OPEN=samples/x.epub` (open a book at start), `ARG1=-d` (debug logging),
+`SCRIPT=test.lua` (run a script instead of reader.lua), `SCREENSHOTS=1 SHOT_FIRST=ms SHOT_INTERVAL=ms SHOT_COUNT=n` (dump frames to
+`host0:/shot_N.bmp`, which is how the emulator screenshots were made).
+
+How it fits together:
+* `ffi.C` / `ffi.load` resolve against a table generated at link time (`koreader-base/utils/gen-psp-symtab.py`); there is no dynamic loader.
+* `package.loadlib` is replaced by a lookup of the statically linked `luaopen_*` functions.
+* POSIX functions newlib lacks are provided by `launcher/psp_posix_stubs.c` (real where it matters) and generated ENOSYS stubs.
+* `koreader-base/ffi-cdecl/posix_h_other_mipsel.lua` holds the PSP's C declarations (types/constants), merged into `ffi/posix_h.lua`.
+* No network: `socket`, `ssl` and `mime` are small Lua stand-ins (`luastubs/`), so network features fail cleanly.
+
+### Status (all verified in PPSSPP only; nothing has run on real hardware)
+Working: boot, file manager, EPUB (CREngine), plain text (CREngine), PDF (MuPDF).
+Known problems:
+* `leaves.epub` and DjVu crash with wild memory accesses (DjVuLibre uses C++ exceptions; unwinding probably does not work in the PRX).
+* sqlite databases cannot be created (statistics, cover browser): `ljsqlite3[cantopen]`.
+* Memory: the EBOOT is 27 MB and KOReader uses a lot of RAM; PPSSPP is run in large-memory mode. A PSP-1000 will not have enough.
+* Speed has not been measured on hardware (the VM does doubles in software).
+* Not built: libressl, libzmq/czmq, luasocket (stand-in used), sdcv (needs GLib).
+* Input: the gamepad is read through KOReader's SDL device layer; no PSP-specific key map yet.
+
+## LuaJIT (Plan A): runs in PPSSPP
+
+LuaJIT does not support the PSP out of the box (MIPS EABI, single-precision FPU). `koreader-base/thirdparty/luajit/psp-eabi-softfp.patch`
+makes it work as a static, soft-float interpreter (JIT off, FFI on):
 
 * accepts the EABI and forces LuaJIT's soft-float mode; no-op instruction cache sync;
-* `buildvm` no longer emits `.abicalls` for the VM object (a lone PIC object made the linker emit unrelocated stubs in the PRX);
-* the interpreter frame owns the 16-byte area (EABI has no caller-owned argument home area; the VM stored `SAVE_L` etc. into the caller's frame);
-* the 5th argument of `lj_meta_arith`/`lj_meta_bitop` is passed in `a4` (EABI) instead of on the stack (o32).
+* `buildvm` no longer emits `.abicalls` (a lone PIC object made the linker emit unrelocated stubs in the PRX);
+* the interpreter frame owns the 16-byte area (EABI has no caller-owned argument home area);
+* the 5th argument of `lj_meta_arith`/`lj_meta_bitop` is passed in `a4`;
+* soft-float int->double conversion uses a software `clz` (the Allegrex encodes `clz` differently from MIPS32);
+* FFI calls follow the EABI: `a0`-`a7`, stack arguments at `sp+0`, `float` arguments in `f12`-`f19` and results in `f0`;
+* `ffi.C` / `ffi.load` use a static symbol table (see above).
 
-`luajit-test/` runs `test.lua` (arithmetic, 32-bit overflow, tables, GC, coroutines, FFI structs) and prints PASS/FAIL. Run it headless:
+`luajit-test/` runs `test.lua` (arithmetic, 32-bit overflow, tables, GC, coroutines, FFI structs/calls with many and float arguments)
+and prints PASS/FAIL:
 
     (cd koreader-base && make TARGET=psp && cd build/psp/cmake && ninja luajit)
     cd luajit-test && make STAGING=/path/to/koreader-base/build/psp/staging
     ppsspp-headless $PWD/EBOOT.PBP --graphics=software -l 2>&1 | grep stdout     # nix: nixpkgs#ppsspp-sdl
-
-Result: all checks pass; a 2M-iteration loop takes ~1 s of emulated time.
-
-### Known gaps
-* `ffi.C.<name>` / `ffi.load()`: no symbol lookup on this OS (needs a generated static symbol table). Required before KOReader's `ffi/*.lua` can run.
-* FFI *calls into C* (`lj_ccall.c`) and callbacks still use the o32 convention (4 register args, 16-byte home area, floats in GPRs).
-  EABI passes 8 register args; this must be adapted before calling C functions with more than 4 arguments.
-* Performance on real hardware is unmeasured.

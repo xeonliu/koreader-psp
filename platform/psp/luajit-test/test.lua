@@ -40,6 +40,13 @@ if okffi then
     ffi.cdef[[ int abs(int); int atoi(const char *); size_t strlen(const char *); ]]
     check("ffi.C.abs", ffi.C.abs(-5), 5)
     check("ffi.C.strlen", tonumber(ffi.C.strlen("hello")), 5)
+    ffi.cdef[[ int snprintf(char *, size_t, const char *, ...); ]]
+    local buf2 = ffi.new("char[64]")
+    ffi.C.snprintf(buf2, 64, "%d-%d-%d-%d", ffi.new("int", 1), ffi.new("int", 2), ffi.new("int", 3), ffi.new("int", 4))
+    check("ffi call with 7 args (a4-a7 + stack)", ffi.string(buf2), "1-2-3-4")
+    ffi.cdef[[ float ko_fmix(int a, float b, int c, float d); double ko_dmix(int a, double b); ]]
+    check("ffi float args/return (a=1,b=2.5,c=3,d=0.5)", ffi.C.ko_fmix(1, 2.5, 3, 0.5), 1 + 5 + 12 + 4)
+    check("ffi double args/return", ffi.C.ko_dmix(2, 0.25), 2.25)
     check("ffi.load + atoi", ffi.load("c").atoi("1234"), 1234)
 end
 print(fails == 0 and "ALL CHECKS PASSED" or (fails .. " CHECK(S) FAILED"))
