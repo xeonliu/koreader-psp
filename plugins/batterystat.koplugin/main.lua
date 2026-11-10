@@ -1,21 +1,15 @@
-local ConfirmBox = require("ui/widget/confirmbox")
+
 local DataStorage = require("datastorage")
-local Dispatcher = require("dispatcher")
 local KeyValuePage = require("ui/widget/keyvaluepage")
 local LuaSettings = require("luasettings")
 local PowerD = require("device"):getPowerDevice()
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
-local datetime = require("datetime")
+local T = require("ffi/util").template
 local dbg = require("dbg")
-local time = require("ui/time")
+local logger = require("logger")
+local util = require("ffi/util")
 local _ = require("gettext")
-
-local BatteryStatWidget = WidgetContainer:extend{
-    name = "batterystat",
-    title = _("Battery statistics"),
-    settings_file = DataStorage:getSettingsDir() .. "/battery_stats.lua",
-}
 
 local State = {}
 
@@ -25,17 +19,16 @@ function State:new(o)
     self.__index = self
     if o.percentage == nil or o.timestamp == nil then
         o.percentage = PowerD:getCapacityHW()
-        o.timestamp = time.boottime_or_realtime_coarse()
+        o.timestamp = os.time()
     end
     return o
 end
 
 function State:toString()
-    return string.format("{%d @ %s}", self.percentage, os.date("%c", time.to_s(self.timestamp)))
+    return string.format("{%d @ %s}", self.percentage, os.date("%c", self.timestamp))
 end
 
 local Usage = {}
-local INDENTATION = "   " -- Three spaces.
 
 function Usage:new(o)
     o = o or {}
@@ -50,88 +43,80 @@ end
 
 function Usage:append(state)
     local curr = State:new()
-    self.percentage = self.percentage + math.abs(state.percentage - curr.percentage)
-    self.time = self.time + curr.timestamp - state.timestamp
+    self.percentage = self.percentage + (state.percentage - curr.percentage)
+    self.time = self.time + os.difftime(curr.timestamp - state.timestamp)
 end
 
-function Usage:percentageRate()
+function Usage:minutes()
+    return self.time / 60
+end
+
+function Usage:hours()
+    return self:minutes() / 60
+end
+
+function Usage:percentagePerHour()
     if self.time == 0 then
         return 0
     else
-        return self.percentage / time.to_s(self.time)
+        return self.percentage / self:hours()
     end
 end
 
-function Usage:percentageRatePerHour()
-    return self:percentageRate() * 3600
+function Usage:remainingHours()
+    local curr = State:new()
+    return curr.percentage / self:percentagePerHour()
 end
 
-function Usage:remainingTime()
-    if self:percentageRate() == 0 then return "N/A" end
+function Usage:chargingHours()
     local curr = State:new()
-    return curr.percentage / self:percentageRate()
-end
-
-function Usage:chargingTime()
-    if self:percentageRate() == 0 then return "N/A" end
-    local curr = State:new()
-    return math.abs(curr.percentage - 100) / self:percentageRate()
+    return (curr.percentage - 100) / self:percentagePerHour()
 end
 
 local function shorten(number)
-    if number == "N/A" then return _("N/A") end
-    return string.format("%.2f%%", number)
+    return string.format("%.2f", number);
 end
 
-local function duration(number)
-    local duration_fmt = G_reader_settings:readSetting("duration_format", "classic")
-    return type(number) ~= "number" and number or
-        datetime.secondsToClockDuration(duration_fmt, number, true, true)
-end
-
-function Usage:dump(kv_pairs, id)
-    local name = id or _("Consumed:")
-    table.insert(kv_pairs, {INDENTATION .. _("Total time:"), duration(time.to_s(self.time)) })
-    table.insert(kv_pairs, {INDENTATION .. name, shorten(self.percentage), "%"})
-    table.insert(kv_pairs, {INDENTATION .. _("Change per hour:"), shorten(self:percentageRatePerHour())})
+function Usage:dump(kv_pairs)
+    table.insert(kv_pairs, {_("    Consumed %"), shorten(self.percentage)})
+    table.insert(kv_pairs, {_("    Total minutes"), shorten(self:minutes())})
+    table.insert(kv_pairs, {_("    % per hour"), shorten(self:percentagePerHour())})
 end
 
 function Usage:dumpRemaining(kv_pairs)
-    table.insert(kv_pairs, {INDENTATION .. _("Estimated remaining time:"), duration(self:remainingTime())})
+    table.insert(kv_pairs, {_("    Estimated remaining hours"), shorten(self:remainingHours())})
 end
 
 function Usage:dumpCharging(kv_pairs)
-    table.insert(kv_pairs, {INDENTATION .. _("Estimated time for charging:"), duration(self:chargingTime())})
+    table.insert(kv_pairs, {_("    Estimated hours for charging"), shorten(self:chargingHours())})
 end
 
 local BatteryStat = {
-    settings = LuaSettings:open(BatteryStatWidget.settings_file),
+    settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/batterstat.lua"),
+    dump_file = util.realpath(DataStorage:getDataDir()) .. "/batterystat.log",
+    debugging = false,
     kv_page = nil,
 }
 
 function BatteryStat:init()
-    self.awake = Usage:new(self.settings:readSetting("awake"))
-    self.sleeping = Usage:new(self.settings:readSetting("sleeping"))
     self.charging = Usage:new(self.settings:readSetting("charging"))
     self.discharging = Usage:new(self.settings:readSetting("discharging"))
+    self.awake = Usage:new(self.settings:readSetting("awake"))
+    self.sleeping = Usage:new(self.settings:readSetting("sleeping"))
 
     -- Note: these fields are not the "real" timestamp and battery usage, but
     -- the unaccumulated values.
-    self.awake_state = State:new()
-    self.charging_state = State:new()
-
+    self.charging_state = State:new(self.settings:readSetting("charging_state"))
+    self.awake_state = State:new(self.settings:readSetting("awake_state"))
     -- Whether the device was suspending before current timestamp.
     self.was_suspending = false
     -- Whether the device was charging before current timestamp.
     self.was_charging = PowerD:isCharging()
-    if self.was_charging then
-        self:reset(true, false)
-    end
-    -- Check if the battery was charging when KO was turned off.
-    local battery_before_off = self.settings:readSetting("awake_state")
-    if battery_before_off and battery_before_off.percentage
-        and self.awake_state.percentage > battery_before_off.percentage then
-        self:reset(false, true)
+
+    if self.debugging then
+        self.debugOutput = self._debugOutput
+    else
+        self.debugOutput = function() end
     end
 end
 
@@ -148,10 +133,10 @@ function BatteryStat:onFlushSettings()
 end
 
 function BatteryStat:accumulate()
-    if self.was_suspending and not self.was_charging then
+    if self.was_suspending then
         -- Suspending to awake.
         self.sleeping:append(self.awake_state)
-    elseif not self.was_suspending and not self.was_charging then
+    else
         -- Awake to suspending, time between self.awake_state and now should belong to awake.
         self.awake:append(self.awake_state)
     end
@@ -165,7 +150,24 @@ function BatteryStat:accumulate()
     self.charging_state = State:new()
 end
 
+function BatteryStat:dumpOrLog(content)
+    local file = io.open(self.dump_file, "a")
+    if file then
+        file:write(content .. "\n")
+        file:close()
+    else
+        logger.warn("Failed to dump output ", content, " into ", self.dump_file )
+    end
+end
+
+function BatteryStat:_debugOutput(event)
+    self:dumpOrLog(event .. " @ " .. State:new():toString() ..
+                   ", awake_state " .. self.awake_state:toString() ..
+                   ", charging_state " .. self.charging_state:toString())
+end
+
 function BatteryStat:onSuspend()
+    self:debugOutput("onSuspend")
     if not self.was_suspending then
         self:accumulate()
     end
@@ -173,6 +175,7 @@ function BatteryStat:onSuspend()
 end
 
 function BatteryStat:onResume()
+    self:debugOutput("onResume")
     if self.was_suspending then
         self:accumulate()
     end
@@ -180,14 +183,16 @@ function BatteryStat:onResume()
 end
 
 function BatteryStat:onCharging()
+    self:debugOutput("onCharging")
     if not self.was_charging then
-        self:reset(true, true)
+        self:reset(true, false)
         self:accumulate()
     end
     self.was_charging = true
 end
 
 function BatteryStat:onNotCharging()
+    self:debugOutput("onNotCharging")
     if self.was_charging then
         self:reset(false, true)
         self:accumulate()
@@ -196,36 +201,31 @@ function BatteryStat:onNotCharging()
 end
 
 function BatteryStat:showStatistics()
-    local function askResetData()
-        UIManager:show(ConfirmBox:new{
-            text = _("Are you sure that you want to clear battery statistics?"),
-            ok_text = _("Clear"),
-            ok_callback = function()
-                self:resetAll()
-                self:restart()
-            end,
-        })
-    end
-
     self:accumulate()
     local kv_pairs = self:dump()
-    kv_pairs[#kv_pairs].separator = true
-    table.insert(kv_pairs, {_("Tap to reset the data"), "",
+    table.insert(kv_pairs, "----------")
+    table.insert(kv_pairs, {_("Historical records are dumped to"), ""})
+    table.insert(kv_pairs, {self.dump_file, ""})
+    table.insert(kv_pairs, "----------")
+    table.insert(kv_pairs, {_("If you would like to reset the data,"), "",
                             callback = function()
-                                UIManager:setDirty(self.kv_page, "fast")
-                                UIManager:scheduleIn(0.1, function()
-                                    askResetData()
-                                end)
+                                self:resetAll()
+                                self:restart()
+                            end})
+    table.insert(kv_pairs, {_("please tap here."), "",
+                            callback = function()
+                                self:resetAll()
+                                self:restart()
                             end})
     self.kv_page = KeyValuePage:new{
-        title = BatteryStatWidget.title .. " (" .. self.awake_state.percentage .. "%)",
+        title = _("Battery statistics"),
         kv_pairs = kv_pairs,
-        single_page = true,
     }
     UIManager:show(self.kv_page)
 end
 
 function BatteryStat:reset(withCharging, withDischarging)
+    self:dumpToText()
     self.awake = Usage:new()
     self.sleeping = Usage:new()
 
@@ -235,7 +235,6 @@ function BatteryStat:reset(withCharging, withDischarging)
     if withDischarging then
         self.discharging = Usage:new()
     end
-    self.awake_state = State:new()
 end
 
 function BatteryStat:resetAll()
@@ -250,6 +249,18 @@ function BatteryStat:restart()
     self:showStatistics()
 end
 
+function BatteryStat:dumpToText()
+    local kv_pairs = self:dump()
+    local content = T(_("Dump at %1"), os.date("%c"))
+    for _, pair in ipairs(kv_pairs) do
+        content = content .. "\n" .. pair[1]
+        if pair[2] ~= nil and pair[2] ~= "" then
+            content = content .. "\t" .. pair[2]
+        end
+    end
+    self:dumpOrLog(content .. "\n-=-=-=-=-=-\n")
+end
+
 function BatteryStat:dump()
     local kv_pairs = {}
     table.insert(kv_pairs, {_("Awake since last charge"), ""})
@@ -259,7 +270,7 @@ function BatteryStat:dump()
     self.sleeping:dump(kv_pairs)
     self.sleeping:dumpRemaining(kv_pairs)
     table.insert(kv_pairs, {_("During last charge"), ""})
-    self.charging:dump(kv_pairs, _("Charged:"))
+    self.charging:dump(kv_pairs)
     self.charging:dumpCharging(kv_pairs)
     table.insert(kv_pairs, {_("Since last charge"), ""})
     self.discharging:dump(kv_pairs)
@@ -269,29 +280,24 @@ end
 
 BatteryStat:init()
 
-function BatteryStatWidget:onDispatcherRegisterActions()
-    Dispatcher:registerAction("battery_statistics", {category="none", event="ShowBatteryStatistics", title=self.title, device=true, separator=true})
-end
+local BatteryStatWidget = WidgetContainer:new{
+    name = "batterystat",
+}
 
 function BatteryStatWidget:init()
     -- self.ui is nil in test cases.
     if not self.ui or not self.ui.menu then return end
-    self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
 end
 
 function BatteryStatWidget:addToMainMenu(menu_items)
     menu_items.battery_statistics = {
-        text = self.title,
+        text = _("Battery statistics"),
         keep_menu_open = true,
         callback = function()
             BatteryStat:showStatistics()
         end,
     }
-end
-
-function BatteryStatWidget:onShowBatteryStatistics()
-    BatteryStat:showStatistics()
 end
 
 function BatteryStatWidget:onFlushSettings()

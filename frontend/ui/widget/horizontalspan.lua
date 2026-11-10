@@ -3,7 +3,7 @@ local Widget = require("ui/widget/widget")
 --[[
 Dummy Widget that reserves horizontal space
 --]]
-local HorizontalSpan = Widget:extend{
+local HorizontalSpan = Widget:new{
     width = 0,
 }
 

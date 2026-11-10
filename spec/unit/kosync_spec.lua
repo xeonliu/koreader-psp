@@ -29,18 +29,12 @@ local service = [[
                 "progress",
                 "percentage",
                 "device",
-                "device_id",
-            ],
-            "optional_params" : [
-                "metadata",
             ],
             "payload" : [
                 "document",
-                "metadata",
                 "progress",
                 "percentage",
                 "device",
-                "device_id",
             ],
             "expected_status" : [200, 202, 401]
         },
@@ -56,9 +50,9 @@ local service = [[
 }
 ]]
 
-describe("KOSync modules #notest", function()
+describe("KOSync modules #notest #nocov", function()
     local logger, md5, client
-    local username, password, doc, metadata, percentage, progress, device, device_id
+    local username, password, doc, percentage, progress, device
 
     setup(function()
         require("commonrequire")
@@ -78,13 +72,11 @@ describe("KOSync modules #notest", function()
         -- password should be hashed before submitting to server
         username, password = "koreader", md5.sum("koreader")
         -- fake progress data
-        doc, metadata, percentage, progress, device, device_id =
+        doc, percentage, progress, device =
             "41cce710f34e5ec21315e19c99821415", -- fast digest of the document
-            { filename = "my_book.epub", title = "My Book", authors = "Test Author" }, -- document metadata
             0.356, -- percentage of the progress
             "69", -- page number or xpointer
-            "my kpw", -- device name
-            "test-device-id" -- device id
+            "my kpw" -- device name
     end)
 
     it("should create new user", function()
@@ -141,11 +133,9 @@ describe("KOSync modules #notest", function()
         local ok, res = pcall(function()
             return client:update_progress({
                 document = doc,
-                metadata = metadata,
                 progress = progress,
                 percentage = percentage,
                 device = device,
-                device_id = device_id,
             })
         end)
         if ok then
@@ -195,7 +185,7 @@ describe("KOSync modules #notest", function()
         body = {}
     }
 
-    --- @todo Test kosync module
+    -- TODO: Test kosync module
     local function mockKOSyncClient() --luacheck: ignore
         package.loaded["KOSyncClient"] = nil
         local c = require("KOSyncClient")
@@ -216,7 +206,7 @@ describe("KOSync modules #notest", function()
             return res.result, res.body
         end
 
-        c.update_progress = function(name, passwd, doc, metadata, prog, percent, device, device_id, cb) --luacheck: ignore
+        c.update_progress = function(name, passwd, doc, prog, percent, device, device_id, cb) --luacheck: ignore
             cb(res.result, res.body)
         end
 

@@ -1,32 +1,64 @@
-local android = require("android")
+local A = require("android")
+A.dl.library_path = A.dl.library_path .. ":" .. A.dir .. "/libs"
+A.log_name = 'KOReader'
 
--- setup Lua paths, and ffi helper / override
-require("setupkoenv")
-
-local lfs = require("libs/libkoreader-lfs")
 local ffi = require("ffi")
-local dummy = require("ffi/posix_h")
 local C = ffi.C
+ffi.cdef[[
+    char *getenv(const char *name);
+    int putenv(const char *envvar);
+]]
 
 -- check uri of the intent that starts this application
-local file = android.getIntent()
+local file = A.jni:context(A.app.activity.vm, function(JNI)
+    local uri = JNI:callObjectMethod(
+        JNI:callObjectMethod(
+            A.app.activity.clazz,
+            "getIntent",
+            "()Landroid/content/Intent;"
+        ),
+        "getData",
+        "()Landroid/net/Uri;"
+    )
+    if uri ~= nil then
+        local path = JNI:callObjectMethod(
+            uri,
+            "getPath",
+            "()Ljava/lang/String;"
+        )
+        return JNI:to_string(path)
+    end
+end)
+A.LOGI("intent file path " .. (file or ""))
 
-if file ~= nil then
-    android.LOGI("intent file path " .. file)
+-- update koreader from ota
+local function update()
+    local new_update = "/sdcard/koreader/ota/koreader.update.tar"
+    local installed = "/sdcard/koreader/ota/koreader.installed.tar"
+    local update_file = io.open(new_update, "r")
+    if update_file ~= nil then
+        io.close(update_file)
+        A.showProgress()
+        if os.execute("tar xf " .. new_update) == 0 then
+            os.execute("mv " .. new_update .. " " .. installed)
+        end
+        A.dismissProgress()
+    end
+
 end
 
--- path to primary external storage partition
-local path = android.getExternalStoragePath()
+-- (Disabled, since we hide navbar on start now no need for this hack)
+-- run koreader patch before koreader startup
+pcall(dofile, "/sdcard/koreader/patch.lua")
 
--- Set $FONTDIR to android.dir/fonts so MuPDF can find its fonts.
-C.setenv("FONTDIR", android.dir .. "/fonts", 1)
+-- set proper permission for sdcv
+A.execute("chmod", "755", "./sdcv")
+A.execute("chmod", "755", "./tar")
+A.execute("chmod", "755", "./zsync")
+
+-- set TESSDATA_PREFIX env var
+C.putenv("TESSDATA_PREFIX=/sdcard/koreader/data")
 
 -- create fake command-line arguments
--- luacheck: ignore 121
-if android.isDebuggable() then
-    arg = {"-d", file}
-else
-    arg = {file}
-end
-
-dofile(android.dir.."/reader.lua")
+arg = {"-d", file or "/sdcard"}
+dofile(A.dir.."/reader.lua")

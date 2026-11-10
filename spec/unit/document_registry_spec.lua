@@ -33,6 +33,7 @@ describe("document registry module", function()
 
         local docsettings = DocSettings:open(path)
         docsettings:purge()
+        docsettings:flush()
     end)
     it("should set global setting for rendering engine", function()
         local path = "../../foo.fb2"
@@ -57,6 +58,7 @@ describe("document registry module", function()
         assert.is_equal("mupdf", provider.provider)
 
         docsettings:purge()
+        docsettings:flush()
     end)
     it("should return global setting for rendering engine", function()
         local path = "../../foofoo.fb2"

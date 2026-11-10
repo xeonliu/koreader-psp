@@ -1,42 +1,16 @@
--- Start with a empty stub, because 99.9% of users won't actually need this.
-local ReaderActivityIndicator = {}
-
-function ReaderActivityIndicator:isStub() return true end
-function ReaderActivityIndicator:onStartActivityIndicator() end
-function ReaderActivityIndicator:onStopActivityIndicator() end
-
--- Now, if we're on Kindle, and we haven't actually murdered Pillow, see what we can do...
-local Device = require("device")
-
-if Device:isKindle() then
-    if os.getenv("PILLOW_HARD_DISABLED") or os.getenv("PILLOW_SOFT_DISABLED") then
-        -- Pillow is dead, bye!
-        return ReaderActivityIndicator
-    end
-
-    if not Device:isTouchDevice() then
-        -- No lipc, bye!
-        return ReaderActivityIndicator
-    end
-else
-    -- Not on Kindle, bye!
-    return ReaderActivityIndicator
-end
-
-
--- Okay, if we're here, it's basically because we're running on a Kindle on FW 5.x under KPV
 local EventListener = require("ui/widget/eventlistener")
+local Device = require("device")
+local util = require("ffi/util")
+-- lipc
 
-ReaderActivityIndicator = EventListener:extend{
-    lipc_handle = nil,
-}
-
-function ReaderActivityIndicator:isStub() return false end
+local ReaderActivityIndicator = EventListener:new{}
 
 function ReaderActivityIndicator:init()
-    local haslipc, lipc = pcall(require, "liblipclua")
-    if haslipc then
-        self.lipc_handle = lipc.init("com.github.koreader.activityindicator")
+    local dev_mod = Device.model
+    if dev_mod == "KindlePaperWhite" or dev_mod == "KindlePaperWhite2" or dev_mod == "KindleVoyage" or dev_mod == "KindleBasic" or dev_mod == "KindlePaperWhite3" or dev_mod == "KindleOasis" or dev_mod == "KindleBasic2" or dev_mod == "KindleTouch" then
+        if (pcall(require, "liblipclua")) then
+            self.lipc_handle = lipc.init("com.github.koreader.activityindicator")
+        end
     end
 end
 
@@ -67,15 +41,15 @@ function ReaderActivityIndicator:onStopActivityIndicator()
                 "clientId":"com.github.koreader.activityindicator", \
                 "priority":true}}')
         self.indicator_started = false
+        util.usleep(1000000)
     end
     return true
 end
 
-function ReaderActivityIndicator:onCloseWidget()
+function ReaderActivityIndicator:coda()
     if self.lipc_handle then
         self.lipc_handle:close()
     end
-    self.lipc_handle = nil
 end
 
 return ReaderActivityIndicator

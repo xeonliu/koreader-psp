@@ -2,7 +2,6 @@
 HTML widget with vertical scroll bar.
 --]]
 
-local BD = require("ui/bidi")
 local Device = require("device")
 local HtmlBoxWidget = require("ui/widget/htmlboxwidget")
 local Geom = require("ui/geometry")
@@ -12,25 +11,23 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local UIManager = require("ui/uimanager")
 local VerticalScrollBar = require("ui/widget/verticalscrollbar")
+local Math = require("optmath")
 local Input = Device.input
 local Screen = Device.screen
 
-local ScrollHtmlWidget = InputContainer:extend{
+local ScrollHtmlWidget = InputContainer:new{
     html_body = nil,
-    is_xhtml = false,
     css = nil,
-    default_font_size = Screen:scaleBySize(24), -- same as infofont
+    default_font_size = 18,
     htmlbox_widget = nil,
     v_scroll_bar = nil,
     dialog = nil,
-    highlight_text_selection = false,
     html_link_tapped_callback = nil,
     dimen = nil,
     width = 0,
     height = 0,
     scroll_bar_width = Screen:scaleBySize(6),
     text_scroll_span = Screen:scaleBySize(12),
-    on_clear_search = nil,
 }
 
 function ScrollHtmlWidget:init()
@@ -39,24 +36,18 @@ function ScrollHtmlWidget:init()
             w = self.width - self.scroll_bar_width - self.text_scroll_span,
             h = self.height,
         },
-        dialog = self.dialog,
-        highlight_text_selection = self.highlight_text_selection,
         html_link_tapped_callback = self.html_link_tapped_callback,
-        on_clear_search = self.on_clear_search,
     }
 
-    self.htmlbox_widget:setContent(self.html_body, self.css, self.default_font_size, self.is_xhtml, nil, self.html_resource_directory)
+    self.htmlbox_widget:setContent(self.html_body, self.css, self.default_font_size)
 
     self.v_scroll_bar = VerticalScrollBar:new{
         enable = self.htmlbox_widget.page_count > 1,
         width = self.scroll_bar_width,
         height = self.height,
-        scroll_callback = function(ratio)
-            self:scrollToRatio(ratio)
-        end
     }
 
-    self:_updateScrollBar()
+    self.v_scroll_bar:set((self.htmlbox_widget.page_number-1) / self.htmlbox_widget.page_count, self.htmlbox_widget.page_number / self.htmlbox_widget.page_count)
 
     local horizontal_group = HorizontalGroup:new{}
     table.insert(horizontal_group, self.htmlbox_widget)
@@ -83,28 +74,11 @@ function ScrollHtmlWidget:init()
         }
     end
 
-    if Device:hasKeys() then
+    if Device:hasKeyboard() or Device:hasKeys() then
         self.key_events = {
-            ScrollDown = { { Input.group.PgFwd } },
-            ScrollUp = { { Input.group.PgBack } },
+            ScrollDown = {{Input.group.PgFwd}, doc = "scroll down"},
+            ScrollUp = {{Input.group.PgBack}, doc = "scroll up"},
         }
-    end
-end
-
--- Not to be confused with ScrollTextWidget's updateScrollBar, which has user-visible effects.
--- This simply updates the scroll bar's internal state according to the current page & page count.
-function ScrollHtmlWidget:_updateScrollBar(draw)
-    -- mimic TextBoxWidget:getVisibleHeightRatios()
-    local low = (self.htmlbox_widget.page_number - 1) / self.htmlbox_widget.page_count
-    local high = self.htmlbox_widget.page_number / self.htmlbox_widget.page_count
-    self.v_scroll_bar:set(low, high)
-    if draw then
-        UIManager:setDirty(self, function()
-            return "partial", self.v_scroll_bar.dimen
-        end)
-    end
-    if self.scroll_callback then
-        self.scroll_callback(low, high)
     end
 end
 
@@ -112,47 +86,19 @@ function ScrollHtmlWidget:getSinglePageHeight()
     return self.htmlbox_widget:getSinglePageHeight()
 end
 
-function ScrollHtmlWidget:getCurrentRatio()
-    return (self.htmlbox_widget.page_number - 1) / self.htmlbox_widget.page_count
-end
-
--- Reset the scrolling *state* to the top of the document, but don't actually re-render/refresh anything.
--- (Useful when replacing a Scroll*Widget during an update call, c.f., DictQuickLookup).
-function ScrollHtmlWidget:resetScroll()
-    self.htmlbox_widget:setPageNumber(1)
-    self:_updateScrollBar()
-
-    self.v_scroll_bar.enable = self.htmlbox_widget.page_count > 1
-end
-
 function ScrollHtmlWidget:scrollToRatio(ratio)
     ratio = math.max(0, math.min(1, ratio)) -- ensure ratio is between 0 and 1 (100%)
-    local page_num = 1 + math.floor((self.htmlbox_widget.page_count) * ratio)
-    if page_num > self.htmlbox_widget.page_count then
-        page_num = self.htmlbox_widget.page_count
-    end
+    local page_num = 1 + Math.round((self.htmlbox_widget.page_count - 1) * ratio)
     if page_num == self.htmlbox_widget.page_number then
         return
     end
-    self.htmlbox_widget:setPageNumber(page_num)
-    self:_updateScrollBar()
-
+    self.htmlbox_widget.page_number = page_num
+    self.v_scroll_bar:set((page_num-1) / self.htmlbox_widget.page_count, page_num / self.htmlbox_widget.page_count)
     self.htmlbox_widget:freeBb()
     self.htmlbox_widget:_render()
-
-    -- If our dialog is currently wrapped in a MovableContainer and that container has been made translucent,
-    -- reset the alpha and refresh the whole thing, because we assume that a scroll means the user actually wants to
-    -- *read* the content, which is kinda hard on a nearly transparent widget ;).
-    if self.dialog.movable and self.dialog.movable.alpha then
-        self.dialog.movable.alpha = nil
-        UIManager:setDirty(self.dialog, function()
-            return "partial", self.dialog.movable.dimen
-        end)
-    else
-        UIManager:setDirty(self.dialog, function()
-            return "partial", self.dimen
-        end)
-    end
+    UIManager:setDirty(self.dialog, function()
+        return "partial", self.dimen
+    end)
 end
 
 function ScrollHtmlWidget:scrollText(direction)
@@ -165,30 +111,23 @@ function ScrollHtmlWidget:scrollText(direction)
             return
         end
 
-        self.htmlbox_widget:setPageNumber(self.htmlbox_widget.page_number + 1)
+        self.htmlbox_widget.page_number = self.htmlbox_widget.page_number + 1
     elseif direction < 0 then
         if self.htmlbox_widget.page_number <= 1 then
             return
         end
 
-        self.htmlbox_widget:setPageNumber(self.htmlbox_widget.page_number - 1)
+        self.htmlbox_widget.page_number = self.htmlbox_widget.page_number - 1
     end
-    self:_updateScrollBar()
+
+    self.v_scroll_bar:set((self.htmlbox_widget.page_number-1) / self.htmlbox_widget.page_count, self.htmlbox_widget.page_number / self.htmlbox_widget.page_count)
 
     self.htmlbox_widget:freeBb()
     self.htmlbox_widget:_render()
 
-    -- Handle the container's alpha as above...
-    if self.dialog.movable and self.dialog.movable.alpha then
-        self.dialog.movable.alpha = nil
-        UIManager:setDirty(self.dialog, function()
-            return "partial", self.dialog.movable.dimen
-        end)
-    else
-        UIManager:setDirty(self.dialog, function()
-            return "partial", self.dimen
-        end)
-    end
+    UIManager:setDirty(self.dialog, function()
+        return "partial", self.dimen
+    end)
 end
 
 function ScrollHtmlWidget:onScrollText(arg, ges)
@@ -204,42 +143,29 @@ function ScrollHtmlWidget:onScrollText(arg, ges)
 end
 
 function ScrollHtmlWidget:onTapScrollText(arg, ges)
-    if self.ignore_taps then return false end
-    if BD.flipIfMirroredUILayout(ges.pos.x < Screen:getWidth()/2) then
-        return self:onScrollUp()
+    if ges.pos.x < Screen:getWidth()/2 then
+        if self.htmlbox_widget.page_number > 1 then
+            self:scrollText(-1)
+            return true
+        end
     else
-        return self:onScrollDown()
-    end
-end
-
-function ScrollHtmlWidget:setTapScrollEnabled(enabled)
-    self.ignore_taps = not enabled
-end
-
-function ScrollHtmlWidget:onScrollUp()
-    if self.htmlbox_widget.page_number > 1 then
-        self:scrollText(-1)
-        return true
+        if self.htmlbox_widget.page_number < self.htmlbox_widget.page_count then
+            self:scrollText(1)
+            return true
+        end
     end
     -- if we couldn't scroll (because we're already at top or bottom),
     -- let it propagate up (e.g. for quickdictlookup to go to next/prev result)
 end
 
 function ScrollHtmlWidget:onScrollDown()
-    if self.htmlbox_widget.page_number < self.htmlbox_widget.page_count then
-        self:scrollText(1)
-        return true
-    end
-    -- if we couldn't scroll (because we're already at top or bottom),
-    -- let it propagate up (e.g. for quickdictlookup to go to next/prev result)
+    self:scrollText(1)
+    return true
 end
 
-function ScrollHtmlWidget:scrollToTop()
-    self:scrollToRatio(0)
-end
-
-function ScrollHtmlWidget:scrollToBottom()
-    self:scrollToRatio(1)
+function ScrollHtmlWidget:onScrollUp()
+    self:scrollText(-1)
+    return true
 end
 
 return ScrollHtmlWidget

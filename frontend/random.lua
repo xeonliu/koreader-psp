@@ -1,6 +1,5 @@
 --- A set of functions to extend math.random and math.randomseed.
 
-local bit = require("bit")
 local random = {}
 
 --- Uses current time as seed to randomize.

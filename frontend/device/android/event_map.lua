@@ -14,7 +14,6 @@ return {
     [23] = "Press", -- DPAD_CENTER
     [24] = "LPgBack", -- VOLUME_UP
     [25] = "LPgFwd",  -- VOLUME_DOWN
-    [27] = "Camera",  -- CAMERA
     [56] = ".",     -- PERIOD
     [59] = "Shift", -- SHIFT_LEFT
     [60] = "Shift", -- SHIFT_RIGHT
@@ -27,4 +26,8 @@ return {
     [84] = "Search",--SEARCH
     [92] = "LPgBack", -- PAGE_UP
     [93] = "LPgFwd",  -- PAGE_DOWN
+
+    [104] = "LPgBack", -- T68 PageUp
+    [109] = "LPgFwd",  -- T68 PageDown
+    [139] = "Menu",    -- T68 Menu
 }

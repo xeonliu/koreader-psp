@@ -2,8 +2,8 @@
 -- usage: ./luajit tools/kobo_touch_probe.lua
 
 require "defaults"
-package.path = "common/?.lua;frontend/?.lua;" .. package.path
-package.cpath = "common/?.so;common/?.dll;/usr/lib/lua/?.so;" .. package.cpath
+package.path = "common/?.lua;rocks/share/lua/5.1/?.lua;frontend/?.lua;" .. package.path
+package.cpath = "common/?.so;common/?.dll;/usr/lib/lua/?.so;rocks/lib/lua/5.1/?.so;" .. package.cpath
 
 local DataStorage = require("datastorage")
 local _ = require("gettext")
@@ -23,29 +23,35 @@ end
 local InputContainer = require("ui/widget/container/inputcontainer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local FrameContainer = require("ui/widget/container/framecontainer")
+local RightContainer = require("ui/widget/container/rightcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local ImageWidget = require("ui/widget/imagewidget")
 local TextWidget = require("ui/widget/textwidget")
 local GestureRange = require("ui/gesturerange")
 local UIManager = require("ui/uimanager")
 local Blitbuffer = require("ffi/blitbuffer")
+local Geom = require("ui/geometry")
 local Device = require("device")
 local Screen = Device.screen
+local Input = Device.input
 local Font = require("ui/font")
+local dbg = require("dbg")
 --dbg:turnOn()
 
-local TouchProbe = InputContainer:extend{
+local TouchProbe = InputContainer:new{
     curr_probe_step = 1,
 }
 
 function TouchProbe:init()
-    self.ges_events.TapProbe = {
-        GestureRange:new{
-            ges = "tap",
-        }
+    self.ges_events = {
+        TapProbe = {
+            GestureRange:new{
+                ges = "tap",
+            }
+        },
     }
     self.image_widget = ImageWidget:new{
-        file = "tools/kobo-touch-probe.png",
+        file = "resources/kobo-touch-probe.png",
     }
     local screen_w, screen_h = Screen:getWidth(), Screen:getHeight()
     local img_w, img_h = self.image_widget:getSize().w, self.image_widget:getSize().h
@@ -109,7 +115,7 @@ function TouchProbe:onTapProbe(arg, ges)
             local need_to_switch_xy = ges.pos.x > ges.pos.y
             self:saveSwitchXYSetting(need_to_switch_xy)
         else
-            -- x not mirrored, need one more probe
+            -- x not mirroed, need one more probe
             self.curr_probe_step = 2
             self:updateProbeInstruction()
             UIManager:setDirty(self)

@@ -1,6 +1,6 @@
---[[--
-Access and modify values in `Kobo eReader.conf` used by Nickel.
-Only PowerOptions:FrontLightLevel is currently supported.
+--[[
+    Access and modify values in 'Kobo eReader.conf' used by Nickel.
+    Only PowerOptions:FrontLightLevel is currently supported .
 ]]
 
 local dbg = require("dbg")
@@ -9,17 +9,22 @@ local NickelConf = {}
 NickelConf.frontLightLevel = {}
 NickelConf.frontLightState = {}
 NickelConf.colorSetting = {}
+NickelConf.autoColorEnabled = {}
 
 local kobo_conf_path = '/mnt/onboard/.kobo/Kobo/Kobo eReader.conf'
 local front_light_level_str = "FrontLightLevel"
 local front_light_state_str = "FrontLightState"
 local color_setting_str = "ColorSetting"
+local auto_color_enabled_str = "AutoColorEnabled"
 -- Nickel will set FrontLightLevel to 0 - 100
 local re_FrontLightLevel = "^" .. front_light_level_str .. "%s*=%s*([0-9]+)%s*$"
 -- Nickel will set FrontLightState to true (light on) or false (light off)
 local re_FrontLightState = "^" .. front_light_state_str .. "%s*=%s*(.+)%s*$"
 -- Nickel will set ColorSetting to 1500 - 6400
 local re_ColorSetting = "^" .. color_setting_str .. "%s*=%s*([0-9]+)%s*$"
+-- AutoColorEnabled is 'true' or 'false'
+-- We do not support 'BedTime' (it is saved as QVariant in Nickel)
+local re_AutoColorEnabled = "^" .. auto_color_enabled_str .. "%s*=%s*([a-z]+)%s*$"
 local re_PowerOptionsSection = "^%[PowerOptions%]%s*"
 local re_AnySection = "^%[.*%]%s*"
 
@@ -52,11 +57,6 @@ function NickelConf._read_kobo_conf(re_Match)
     return value
 end
 
---[[--
-Get frontlight level.
-
-@treturn int Frontlight level.
---]]
 function NickelConf.frontLightLevel.get()
     local new_intensity = NickelConf._read_kobo_conf(re_FrontLightLevel)
     if new_intensity then
@@ -70,29 +70,16 @@ function NickelConf.frontLightLevel.get()
     end
 end
 
---[[--
-Get frontlight state.
-
-This entry will be missing for devices that do not have a hardware toggle button.
-We return nil in this case.
-
-@treturn int Frontlight state (or nil).
---]]
 function NickelConf.frontLightState.get()
     local new_state = NickelConf._read_kobo_conf(re_FrontLightState)
-
     if new_state then
         new_state = (new_state == "true") or false
     end
-
+    -- for devices that do not have toggle button, the entry will be missing
+    -- and we return nil in this case.
     return new_state
 end
 
---[[--
-Get color setting.
-
-@treturn int Color setting.
---]]
 function NickelConf.colorSetting.get()
     local new_colorsetting = NickelConf._read_kobo_conf(re_ColorSetting)
     if new_colorsetting then
@@ -100,14 +87,13 @@ function NickelConf.colorSetting.get()
     end
 end
 
---[[--
-Write Kobo configuration.
+function NickelConf.autoColorEnabled.get()
+    local new_autocolor = NickelConf._read_kobo_conf(re_AutoColorEnabled)
+    if new_autocolor then
+        return (new_autocolor == "true")
+    end
+end
 
-@string re_Match Lua pattern.
-@string key Kobo conf key.
-@param value
-@bool dontcreate Don't create if key doesn't exist.
---]]
 function NickelConf._write_kobo_conf(re_Match, key, value, dont_create)
     local kobo_conf = io.open(kobo_conf_path, "r")
     local lines = {}
@@ -164,60 +150,46 @@ function NickelConf._write_kobo_conf(re_Match, key, value, dont_create)
     return true
 end
 
---[[--
-Set frontlight level.
-
-@int new_intensity
---]]
 function NickelConf.frontLightLevel.set(new_intensity)
-    if type(new_intensity) ~= "number" or (new_intensity < 0 or new_intensity > 100) then return end
+    assert(new_intensity >= 0 and new_intensity <= 100,
+           "Wrong brightness value given!")
     return NickelConf._write_kobo_conf(re_FrontLightLevel,
                                        front_light_level_str,
                                        new_intensity)
 end
-dbg:guard(NickelConf.frontLightLevel, "set",
-    function(new_intensity)
-        assert(type(new_intensity) == "number",
-               "Wrong brightness value type (expected number)!")
-        assert(new_intensity >= 0 and new_intensity <= 100,
-               "Wrong brightness value given!")
-    end)
 
---[[--
-Set frontlight state.
-
-@bool new_state
---]]
 function NickelConf.frontLightState.set(new_state)
-    if new_state == nil or type(new_state) ~= "boolean" then return end
+    assert(type(new_state) == "boolean",
+           "Wrong front light state value type (expect boolean)!")
     return NickelConf._write_kobo_conf(re_FrontLightState,
                                        front_light_state_str,
                                        new_state,
-                                       -- Do not create if this entry is missing.
+                                       -- do not create this entry is missing
                                        true)
 end
-dbg:guard(NickelConf.frontLightState, "set",
-    function(new_state)
-        assert(type(new_state) == "boolean",
-            "Wrong front light state value type (expected boolean)!")
-    end)
 
---[[--
-Set color setting.
-
-@int new_color >= 1500 and <= 6400
---]]
 function NickelConf.colorSetting.set(new_color)
     return NickelConf._write_kobo_conf(re_ColorSetting,
                                        color_setting_str,
                                        new_color)
 end
-dbg:guard(NickelConf.colorSetting, "set",
-    function(new_color)
-        assert(type(new_color) == "number",
-            "Wrong color value type (expected number)!")
-        assert(new_color >= 1500 and new_color <= 6400,
-            "Wrong colorSetting value given!")
-    end)
+
+function NickelConf.autoColorEnabled.set(new_autocolor)
+    return NickelConf._write_kobo_conf(re_AutoColorEnabled,
+                                       auto_color_enabled_str,
+                                       new_autocolor)
+end
+
+dbg:guard(NickelConf.colorSetting, 'set',
+          function(self, new_color)
+              assert(new_color >= 1500 and new_color <= 6400,
+                     "Wrong colorSetting value given!")
+          end)
+
+dbg:guard(NickelConf.autoColorEnabled, 'set',
+          function(self, new_autocolor)
+              assert(type(new_autocolor) == "boolean",
+                     "Wrong type for autocolor (expected boolean)!")
+          end)
 
 return NickelConf

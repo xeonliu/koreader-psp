@@ -5,11 +5,11 @@ Widget that displays a line.
 local Blitbuffer = require("ffi/blitbuffer")
 local Widget = require("ui/widget/widget")
 
-local LineWidget = Widget:extend{
+local LineWidget = Widget:new{
     style = "solid",
     background = Blitbuffer.COLOR_BLACK,
     dimen = nil,
-    --- @todo Replay dirty hack here  13.03 2013 (houqp).
+    --@TODO replay dirty hack here  13.03 2013 (houqp)
     empty_segments = nil,
 }
 

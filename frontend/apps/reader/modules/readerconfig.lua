@@ -1,57 +1,32 @@
 local ConfigDialog = require("ui/widget/configdialog")
 local Device = require("device")
 local Event = require("ui/event")
+local Geom = require("ui/geometry")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local UIManager = require("ui/uimanager")
-local CreOptions = require("ui/data/creoptions")
-local KoptOptions = require("ui/data/koptoptions")
 local _ = require("gettext")
 
-local ReaderConfig = InputContainer:extend{
+local ReaderConfig = InputContainer:new{
     last_panel_index = 1,
 }
 
 function ReaderConfig:init()
-    if self.document.koptinterface ~= nil then
-        self.options = KoptOptions
-    else
-        self.options = CreOptions
+    if not self.dimen then self.dimen = Geom:new{} end
+    if Device:hasKeys() then
+        self.key_events = {
+            ShowConfigMenu = { {{"Press","AA"}}, doc = "show config dialog" },
+        }
     end
-    self.configurable:loadDefaults(self.options)
-
-    self:registerKeyEvents()
-    self:initGesListener()
-    if G_reader_settings:has("activate_menu") then
-        self.activation_menu = G_reader_settings:readSetting("activate_menu")
-    else
+    if Device:isTouchDevice() then
+        self:initGesListener()
+    end
+    self.activation_menu = G_reader_settings:readSetting("activate_menu")
+    if self.activation_menu == nil then
         self.activation_menu = "swipe_tap"
     end
-
-    -- delegate gesture listener to ReaderUI, NOP our own
-    self.ges_events = nil
 end
-
-function ReaderConfig:onGesture() end
-
-function ReaderConfig:registerKeyEvents()
-    if Device:hasKeys() then
-        if Device:hasScreenKB() or Device:hasSymKey() then
-            local key = Device:hasScreenKB() and "ScreenKBPress" or "AA"
-            self.key_events.ShowConfigMenu = { { key } }
-            -- Hotkeys adds by default "Press" as another ShowConfigMenu shortcut
-        else
-            self.key_events.ShowConfigMenu = { { { "Press", "AA" } } }
-        end
-    end
-end
-
-ReaderConfig.onPhysicalKeyboardConnected = ReaderConfig.registerKeyEvents
 
 function ReaderConfig:initGesListener()
-    if not Device:isTouchDevice() then return end
-
-    local DTAP_ZONE_CONFIG = G_defaults:readSetting("DTAP_ZONE_CONFIG")
-    local DTAP_ZONE_CONFIG_EXT = G_defaults:readSetting("DTAP_ZONE_CONFIG_EXT")
     self.ui:registerTouchZones({
         {
             id = "readerconfigmenu_tap",
@@ -60,22 +35,7 @@ function ReaderConfig:initGesListener()
                 ratio_x = DTAP_ZONE_CONFIG.x, ratio_y = DTAP_ZONE_CONFIG.y,
                 ratio_w = DTAP_ZONE_CONFIG.w, ratio_h = DTAP_ZONE_CONFIG.h,
             },
-            overrides = {
-                "tap_forward",
-                "tap_backward",
-            },
-            handler = function() return self:onTapShowConfigMenu() end,
-        },
-        {
-            id = "readerconfigmenu_ext_tap",
-            ges = "tap",
-            screen_zone = {
-                ratio_x = DTAP_ZONE_CONFIG_EXT.x, ratio_y = DTAP_ZONE_CONFIG_EXT.y,
-                ratio_w = DTAP_ZONE_CONFIG_EXT.w, ratio_h = DTAP_ZONE_CONFIG_EXT.h,
-            },
-            overrides = {
-                "readerconfigmenu_tap",
-            },
+            overrides = { 'tap_forward', 'tap_backward', },
             handler = function() return self:onTapShowConfigMenu() end,
         },
         {
@@ -85,22 +45,7 @@ function ReaderConfig:initGesListener()
                 ratio_x = DTAP_ZONE_CONFIG.x, ratio_y = DTAP_ZONE_CONFIG.y,
                 ratio_w = DTAP_ZONE_CONFIG.w, ratio_h = DTAP_ZONE_CONFIG.h,
             },
-            overrides = {
-                "rolling_swipe",
-                "paging_swipe",
-            },
-            handler = function(ges) return self:onSwipeShowConfigMenu(ges) end,
-        },
-        {
-            id = "readerconfigmenu_ext_swipe",
-            ges = "swipe",
-            screen_zone = {
-                ratio_x = DTAP_ZONE_CONFIG_EXT.x, ratio_y = DTAP_ZONE_CONFIG_EXT.y,
-                ratio_w = DTAP_ZONE_CONFIG_EXT.w, ratio_h = DTAP_ZONE_CONFIG_EXT.h,
-            },
-            overrides = {
-                "readerconfigmenu_swipe",
-            },
+            overrides = { "rolling_swipe", "paging_swipe", },
             handler = function(ges) return self:onSwipeShowConfigMenu(ges) end,
         },
         {
@@ -110,22 +55,7 @@ function ReaderConfig:initGesListener()
                 ratio_x = DTAP_ZONE_CONFIG.x, ratio_y = DTAP_ZONE_CONFIG.y,
                 ratio_w = DTAP_ZONE_CONFIG.w, ratio_h = DTAP_ZONE_CONFIG.h,
             },
-            overrides = {
-                "rolling_pan",
-                "paging_pan",
-            },
-            handler = function(ges) return self:onSwipeShowConfigMenu(ges) end,
-        },
-        {
-            id = "readerconfigmenu_ext_pan",
-            ges = "pan",
-            screen_zone = {
-                ratio_x = DTAP_ZONE_CONFIG_EXT.x, ratio_y = DTAP_ZONE_CONFIG_EXT.y,
-                ratio_w = DTAP_ZONE_CONFIG_EXT.w, ratio_h = DTAP_ZONE_CONFIG_EXT.h,
-            },
-            overrides = {
-                "readerconfigmenu_pan",
-            },
+            overrides = { "rolling_pan", "paging_pan", },
             handler = function(ges) return self:onSwipeShowConfigMenu(ges) end,
         },
     })
@@ -133,20 +63,17 @@ end
 
 function ReaderConfig:onShowConfigMenu()
     self.config_dialog = ConfigDialog:new{
-        document = self.document,
+        dimen = self.dimen:copy(),
         ui = self.ui,
         configurable = self.configurable,
         config_options = self.options,
         is_always_active = true,
-        covers_footer = true,
         close_callback = function() self:onCloseCallback() end,
     }
-    self.ui.keyselection:stopHighlightIndicator(true) -- stop any text selection in progress, if applicable
     self.ui:handleEvent(Event:new("DisableHinting"))
     -- show last used panel when opening config dialog
     self.config_dialog:onShowConfigPanel(self.last_panel_index)
     UIManager:show(self.config_dialog)
-    self.ui:handleEvent(Event:new("HandledAsSwipe")) -- cancel any pan scroll made
 
     return true
 end
@@ -165,11 +92,11 @@ function ReaderConfig:onSwipeShowConfigMenu(ges)
     end
 end
 
--- For some reason, things are fine and dandy without any of this for rotations, but we need it for actual resizes...
 function ReaderConfig:onSetDimensions(dimen)
+    -- since we cannot redraw config_dialog with new size, we close
+    -- the old one on screen size change
     if self.config_dialog then
-        -- init basically calls update & initGesListener and nothing else, which is exactly what we want.
-        self.config_dialog:init()
+        self.config_dialog:closeDialog()
     end
 end
 

@@ -1,13 +1,12 @@
 --[[--
 A simple serialization function which won't do uservalues, functions, or loops.
-
-If you need a more full-featured variant, serpent is available in ffi/serpent ;).
 ]]
 
+local isUbuntuTouch = os.getenv("UBUNTU_APPLICATION_ISOLATION") ~= nil
 local insert = table.insert
 local indent_prefix = "    "
 
-local function _serialize(what, outt, indent, max_lv, history, pairs_func)
+local function _serialize(what, outt, indent, max_lv, history)
     if not max_lv then
         max_lv = math.huge
     end
@@ -16,8 +15,7 @@ local function _serialize(what, outt, indent, max_lv, history, pairs_func)
         return
     end
 
-    local datatype = type(what)
-    if datatype == "table" then
+    if type(what) == "table" then
         history = history or {}
         for up, item in ipairs(history) do
             if item == what then
@@ -30,14 +28,16 @@ local function _serialize(what, outt, indent, max_lv, history, pairs_func)
         local new_history = { what, unpack(history) }
         local didrun = false
         insert(outt, "{")
-        for k, v in pairs_func(what) do
+        for k, v in pairs(what) do
+            if didrun then
+                insert(outt, ",")
+            end
             insert(outt, "\n")
             insert(outt, string.rep(indent_prefix, indent+1))
             insert(outt, "[")
-            _serialize(k, outt, indent+1, max_lv, new_history, pairs_func)
+            _serialize(k, outt, indent+1, max_lv, new_history)
             insert(outt, "] = ")
-            _serialize(v, outt, indent+1, max_lv, new_history, pairs_func)
-            insert(outt, ",")
+            _serialize(v, outt, indent+1, max_lv, new_history)
             didrun = true
         end
         if didrun then
@@ -45,15 +45,23 @@ local function _serialize(what, outt, indent, max_lv, history, pairs_func)
             insert(outt, string.rep(indent_prefix, indent))
         end
         insert(outt, "}")
-    elseif datatype == "string" then
+    elseif type(what) == "string" then
         insert(outt, string.format("%q", what))
-    elseif datatype == "number" then
+    elseif type(what) == "number" then
+        if isUbuntuTouch then
+            -- FIXME: the `SDL_CreateRenderer` function in Ubuntu touch somehow
+            -- use a strange locale that formats number like this: 1.10000000000000g+02
+            -- which cannot be recognized by loadfile after the number is dumped.
+            -- Here the workaround is to preserve enough precision in "%.13e" format.
+            insert(outt, string.format("%.13e", what))
+        else
+            insert(outt, tostring(what))
+        end
+    elseif type(what) == "boolean" then
         insert(outt, tostring(what))
-    elseif datatype == "boolean" then
+    elseif type(what) == "function" then
         insert(outt, tostring(what))
-    elseif datatype == "function" then
-        insert(outt, tostring(what))
-    elseif datatype == "nil" then
+    elseif type(what) == "nil" then
         insert(outt, "nil")
     end
 end
@@ -65,10 +73,9 @@ You can optionally specify a maximum recursion depth in `max_lv`.
 @param data the object you want serialized (table, string, number, boolean, nil)
 @param max_lv optional maximum recursion depth
 --]]
-local function dump(data, max_lv, ordered)
+local function dump(data, max_lv)
     local out = {}
-    local pairs_func = ordered and require("ffi/util").orderedPairs or pairs
-    _serialize(data, out, 0, max_lv, nil, pairs_func)
+    _serialize(data, out, 0, max_lv)
     return table.concat(out)
 end
 

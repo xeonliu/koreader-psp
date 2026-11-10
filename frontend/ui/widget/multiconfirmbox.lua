@@ -26,7 +26,7 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
-local IconWidget = require("ui/widget/iconwidget")
+local ImageWidget = require("ui/widget/imagewidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local MovableContainer = require("ui/widget/container/movablecontainer")
 local Size = require("ui/size")
@@ -34,24 +34,20 @@ local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
+local logger = require("logger")
 local _ = require("gettext")
 local Screen = require("device").screen
 
-local MultiConfirmBox = InputContainer:extend{
+local MultiConfirmBox = InputContainer:new{
     modal = true,
     text = _("no text"),
     face = Font:getFace("infofont"),
-    icon = "notice-question",
     choice1_text = _("Choice 1"),
-    choice1_text_func = nil,
     choice2_text = _("Choice 2"),
-    choice2_text_func = nil,
     cancel_text = _("Cancel"),
     choice1_callback = function() end,
     choice2_callback = function() end,
     cancel_callback = function() end,
-    choice1_enabled = true,
-    choice2_enabled = true,
     margin = Size.margin.default,
     padding = Size.padding.default,
     dismissable = true, -- set to false if any button callback is required
@@ -72,25 +68,29 @@ function MultiConfirmBox:init()
             }
         end
         if Device:hasKeys() then
-            self.key_events.Close = { { Device.input.group.Back } }
+            self.key_events = {
+                Close = { {"Back"}, doc = "cancel" }
+            }
         end
     end
     local content = HorizontalGroup:new{
         align = "center",
-        IconWidget:new{
-            icon = self.icon,
-            alpha = true,
+        ImageWidget:new{
+            file = "resources/info-i.png",
+            scale_for_dpi = true,
         },
         HorizontalSpan:new{ width = Size.span.horizontal_default },
         TextBoxWidget:new{
             text = self.text,
             face = self.face,
-            width = math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 2/3),
+            width = Screen:getWidth()*2/3,
         }
     }
 
     local button_table = ButtonTable:new{
         width = content:getSize().w,
+        button_font_face = "cfont",
+        button_font_size = 20,
         buttons = {
             {
                 {
@@ -102,8 +102,6 @@ function MultiConfirmBox:init()
                 },
                 {
                     text = self.choice1_text,
-                    text_func = self.choice1_text_func,
-                    enabled = self.choice1_enabled,
                     callback = function()
                         self.choice1_callback()
                         UIManager:close(self)
@@ -111,8 +109,6 @@ function MultiConfirmBox:init()
                 },
                 {
                     text = self.choice2_text,
-                    text_func = self.choice2_text_func,
-                    enabled = self.choice2_enabled,
                     callback = function()
                         self.choice2_callback()
                         UIManager:close(self)
@@ -129,7 +125,7 @@ function MultiConfirmBox:init()
         MovableContainer:new{
             FrameContainer:new{
                 background = Blitbuffer.COLOR_WHITE,
-                radius = Size.radius.window,
+                margin = self.margin,
                 padding = self.padding,
                 padding_bottom = 0, -- no padding below buttontable
                 VerticalGroup:new{
@@ -146,13 +142,13 @@ end
 
 function MultiConfirmBox:onShow()
     UIManager:setDirty(self, function()
-        return "ui", self[1][1].dimen -- i.e., MovableContainer
+        return "ui", self[1][1].dimen
     end)
 end
 
 function MultiConfirmBox:onCloseWidget()
     UIManager:setDirty(nil, function()
-        return "ui", self[1][1].dimen
+        return "partial", self[1][1].dimen
     end)
 end
 
@@ -167,6 +163,19 @@ function MultiConfirmBox:onTapClose(arg, ges)
         return true
     end
     return false
+end
+
+function MultiConfirmBox:onSelect()
+    logger.dbg("selected:", self.selected.x)
+    if self.selected.x == 1 then
+        self:choice1_callback()
+    elseif self.selected.x == 2 then
+        self:choice2_callback()
+    elseif self.selected.x == 0 then
+        self:cancle_callback()
+    end
+    UIManager:close(self)
+    return true
 end
 
 return MultiConfirmBox

@@ -1,13 +1,6 @@
-local BD = require("ui/bidi")
-local ButtonDialog = require("ui/widget/buttondialog")
 local ConfirmBox = require("ui/widget/confirmbox")
 local DataStorage = require("datastorage")
-local Device = require("device")
-local Dispatcher = require("dispatcher")
-local DocumentRegistry = require("document/documentregistry")
-local DoubleSpinWidget = require("ui/widget/doublespinwidget")
 local Font = require("ui/font")
-local QRMessage = require("ui/widget/qrmessage")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
 local LuaSettings = require("luasettings")
@@ -16,17 +9,15 @@ local PathChooser = require("ui/widget/pathchooser")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
-local ffiUtil = require("ffi/util")
-local lfs = require("libs/libkoreader-lfs")
+local ffiutil = require("ffi/util")
 local logger = require("logger")
 local util = require("util")
 local _ = require("gettext")
 local Screen = require("device").screen
-local T = ffiUtil.template
+local T = ffiutil.template
 
-local TextEditor = WidgetContainer:extend{
+local TextEditor = WidgetContainer:new{
     name = "texteditor",
-    fullname = _("Text editor"),
     settings_file = DataStorage:getSettingsDir() .. "/text_editor.lua",
     settings = nil, -- loaded only when needed
     -- how many to display in menu (10x3 pages minus our 3 default menu items):
@@ -34,36 +25,11 @@ local TextEditor = WidgetContainer:extend{
     history_keep_size = 60, -- hom many to keep in settings
     normal_font = "x_smallinfofont",
     monospace_font = "infont",
-    default_font_size = 20, -- x_smallinfofont default size
     min_file_size_warn = 200000, -- warn/ask when opening files bigger than this
 }
 
-function TextEditor:onDispatcherRegisterActions()
-    Dispatcher:registerAction("edit_last_edited_file", { category = "none", event = "OpenLastEditedFile", title = _("Text editor: open last file"), general=true, separator = true})
-end
-
 function TextEditor:init()
-    self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
-    self:registerDocumentRegistryAuxProvider()
-end
-
-function TextEditor:registerDocumentRegistryAuxProvider()
-    DocumentRegistry:addAuxProvider({
-        provider_name = self.fullname,
-        provider = self.name,
-        order = 30, -- order in OpenWith dialog
-        disable_file = true,
-        disable_type = false,
-    })
-end
-
-function TextEditor:isFileTypeSupported(file)
-    return true
-end
-
-function TextEditor:openFile(file, caller_callback)
-    self:checkEditFile(file, nil, nil, caller_callback)
 end
 
 function TextEditor:loadSettings()
@@ -71,28 +37,23 @@ function TextEditor:loadSettings()
         return
     end
     self.settings = LuaSettings:open(self.settings_file)
-    -- NOTE: addToHistory assigns a new object
     self.history = self.settings:readSetting("history") or {}
     self.last_view_pos = self.settings:readSetting("last_view_pos") or {}
-    self.last_path = self.settings:readSetting("last_path") or ffiUtil.realpath(DataStorage:getDataDir())
+    self.last_path = self.settings:readSetting("last_path") or ffiutil.realpath(DataStorage:getDataDir())
     self.font_face = self.settings:readSetting("font_face") or self.normal_font
-    self.font_size = self.settings:readSetting("font_size") or self.default_font_size
+    self.font_size = self.settings:readSetting("font_size") or 20 -- x_smallinfofont default size
     -- The font settings could be saved in G_reader_setting if we want them
     -- to be re-used by default by InputDialog (on certain conditaions,
     -- when fullscreen or condensed or add_nav_bar...)
     --
-    -- Allow users to set their preferred font manually in text_editor.lua
-    -- (sadly, not via TextEditor itself, as they would be overridden on close)
-    if self.settings:has("normal_font") then
+    -- Allow users to set their prefered font manually in text_editor.lua
+    -- (sadly, not via TextEditor itself, as they would be overriden on close)
+    if self.settings:readSetting("normal_font") then
         self.normal_font = self.settings:readSetting("normal_font")
     end
-    if self.settings:has("monospace_font") then
+    if self.settings:readSetting("monospace_font") then
         self.monospace_font = self.settings:readSetting("monospace_font")
     end
-    self.auto_para_direction = self.settings:nilOrTrue("auto_para_direction")
-    self.force_ltr_para_direction = self.settings:isTrue("force_ltr_para_direction")
-    self.qr_code_export = self.settings:nilOrTrue("qr_code_export")
-    self.show_keyboard_on_start = self.settings:nilOrTrue("show_keyboard_on_start")
 end
 
 function TextEditor:onFlushSettings()
@@ -102,17 +63,13 @@ function TextEditor:onFlushSettings()
         self.settings:saveSetting("last_path", self.last_path)
         self.settings:saveSetting("font_face", self.font_face)
         self.settings:saveSetting("font_size", self.font_size)
-        self.settings:saveSetting("auto_para_direction", self.auto_para_direction)
-        self.settings:saveSetting("force_ltr_para_direction", self.force_ltr_para_direction)
-        self.settings:saveSetting("qr_code_export", self.qr_code_export)
-        self.settings:saveSetting("show_keyboard_on_start", self.show_keyboard_on_start)
         self.settings:flush()
     end
 end
 
 function TextEditor:addToMainMenu(menu_items)
     menu_items.text_editor = {
-        text = self.fullname,
+        text = _("Text editor"),
         sub_item_table_func = function()
             return self:getSubMenuItems()
         end,
@@ -122,28 +79,25 @@ end
 function TextEditor:getSubMenuItems()
     self:loadSettings()
     self.whenDoneFunc = nil -- discard reference to previous TouchMenu instance
-    local sub_item_table
-    sub_item_table = {
+    local sub_item_table = {
         {
-            text = _("Settings"),
+            text = _("Text editor settings"),
             sub_item_table = {
                 {
-                    text_func = function()
-                        return T(_("Text font size: %1"), self.font_size)
-                    end,
+                    text = _("Set text font size"),
                     keep_menu_open = true,
-                    callback = function(touchmenu_instance)
+                    callback = function()
                         local SpinWidget = require("ui/widget/spinwidget")
                         local font_size = self.font_size
                         UIManager:show(SpinWidget:new{
+                            width = Screen:getWidth() * 0.6,
                             value = font_size,
                             value_min = 8,
                             value_max = 26,
-                            default_value = self.default_font_size,
-                            title_text =  _("Text font size"),
+                            ok_text = _("Set font size"),
+                            title_text =  _("Select font size"),
                             callback = function(spin)
                                 self.font_size = spin.value
-                                touchmenu_instance:updateItems()
                             end,
                         })
                     end,
@@ -160,96 +114,24 @@ function TextEditor:getSubMenuItems()
                             self.font_face = self.monospace_font
                         end
                     end,
-                    separator = true,
-                },
-                {
-                    text = _("Auto paragraph direction"),
-                    help_text = _([[
-Detect the direction of each paragraph in the text: align to the right paragraphs in languages such as Arabic and Hebrew…, while keeping other paragraphs aligned to the left.
-If disabled, paragraphs align according to KOReader's language default direction.]]),
-                    checked_func = function()
-                        return self.auto_para_direction
-                    end,
-                    callback = function()
-                        self.auto_para_direction = not self.auto_para_direction
-                    end,
-                },
-                {
-                    text = _("Force paragraph direction LTR"),
-                    help_text = _([[
-Force all text to be displayed Left-To-Right (LTR) and aligned to the left.
-Enable this if you are mostly editing code, HTML, CSS…]]),
-                    enabled_func = BD.rtlUIText, -- only useful for RTL users editing code
-                    checked_func = function()
-                        return BD.rtlUIText() and self.force_ltr_para_direction
-                    end,
-                    callback = function()
-                        self.force_ltr_para_direction = not self.force_ltr_para_direction
-                    end,
-                    separator = true,
-                },
-                {
-                    text = _("Show keyboard on start"),
-                    checked_func = function()
-                        return self.show_keyboard_on_start
-                    end,
-                    callback = function()
-                        self.show_keyboard_on_start = not self.show_keyboard_on_start
-                    end,
-                },
-                {
-                    text = _("Enable QR code export"),
-                    help_text = _([[
-Export text to QR code, that can be scanned, for example, by a phone.]]),
-                    checked_func = function()
-                        return self.qr_code_export
-                    end,
-                    callback = function()
-                        self.qr_code_export = not self.qr_code_export
-                    end,
-                    separator = true,
-                },
-                {
-                    text = _("Clean text editor history"),
-                    enabled_func = function()
-                        return #self.history > 0
-                    end,
-                    keep_menu_open = true,
-                    callback = function(touchmenu_instance)
-                        UIManager:show(ConfirmBox:new{
-                            text = _("Clean text editor history?"),
-                            ok_text = _("Clean"),
-                            ok_callback = function()
-                                self.history = {}
-                                self.last_view_pos = {}
-                                -- remove history items from the parent menu
-                                for j = #sub_item_table, 1, -1 do
-                                    if sub_item_table[j].is_file then
-                                        table.remove(sub_item_table)
-                                    end
-                                end
-                                touchmenu_instance:updateItems()
-                            end,
-                        })
-                end,
                 },
             },
             separator = true,
         },
         {
-            text = _("New file"),
-            keep_menu_open = true,
-            callback = function(touchmenu_instance)
-                self:setupWhenDoneFunc(touchmenu_instance)
-                self:newFile()
-            end,
-        },
-        {
-            text = _("Open file"),
+            text = _("Select a file to open"),
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 self:setupWhenDoneFunc(touchmenu_instance)
                 self:chooseFile()
+            end,
+        },
+        {
+            text = _("Edit a new empty file"),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                self:setupWhenDoneFunc(touchmenu_instance)
+                self:newFile()
             end,
             separator = true,
         },
@@ -258,14 +140,14 @@ Export text to QR code, that can be scanned, for example, by a phone.]]),
         local file_path = self.history[i]
         local directory, filename = util.splitFilePathName(file_path) -- luacheck: no unused
         table.insert(sub_item_table, {
-            text = T("\u{f016} %1", BD.filename(filename)), -- file symbol
+            text = T("%1. %2", i, filename),
             keep_menu_open = true,
-            is_file = true, -- for history cleanup
             callback = function(touchmenu_instance)
                 self:setupWhenDoneFunc(touchmenu_instance)
                 self:checkEditFile(file_path, true)
             end,
-            hold_callback = function(touchmenu_instance, item)
+            _texteditor_id = file_path, -- for removal from menu itself
+            hold_callback = function(touchmenu_instance)
                 -- Show full path and some info, and propose to remove from history
                 local text
                 local attr = lfs.attributes(file_path)
@@ -273,17 +155,24 @@ Export text to QR code, that can be scanned, for example, by a phone.]]),
                     local filesize = util.getFormattedSize(attr.size)
                     local lastmod = os.date("%Y-%m-%d %H:%M", attr.modification)
                     text = T(_("File path:\n%1\n\nFile size: %2 bytes\nLast modified: %3\n\nRemove this file from text editor history?"),
-                                BD.filepath(file_path), filesize, lastmod)
+                                file_path, filesize, lastmod)
                 else
                     text = T(_("File path:\n%1\n\nThis file does not exist anymore.\n\nRemove it from text editor history?"),
-                                BD.filepath(file_path))
+                                file_path)
                 end
                 UIManager:show(ConfirmBox:new{
                     text = text,
-                    ok_text = _("Remove"),
+                    ok_text = _("Yes"),
+                    cancel_text = _("No"),
                     ok_callback = function()
                         self:removeFromHistory(file_path)
-                        table.remove(touchmenu_instance.item_table, item.idx)
+                        -- Also remove from menu itself
+                        for j=1, #sub_item_table do
+                            if sub_item_table[j]._texteditor_id == file_path then
+                                table.remove(sub_item_table, j)
+                                break
+                            end
+                        end
                         touchmenu_instance:updateItems()
                     end,
                 })
@@ -314,7 +203,7 @@ function TextEditor:execWhenDoneFunc()
 end
 
 function TextEditor:removeFromHistory(file_path)
-    for i = #self.history, 1, -1 do
+    for i=#self.history, 1, -1 do
         if self.history[i] == file_path then
             table.remove(self.history, i)
         end
@@ -338,60 +227,65 @@ function TextEditor:addToHistory(file_path)
     self.history = new_history
 end
 
-function TextEditor:newFile(new_path, caller_callback)
+function TextEditor:newFile()
     self:loadSettings()
-    new_path = new_path or (self.last_path == "/" and "/" or self.last_path .. "/")
-    local file_input
-    file_input = InputDialog:new{
-        title =  _("Enter filename"),
-        input = new_path,
-        buttons = {
-            {
-                {
-                    text = _("Choose folder"),
-                    callback = function()
-                        UIManager:close(file_input) -- need to close keyboard
-                        local path_chooser = PathChooser:new{
-                            select_file = false,
-                            path = new_path:match("(.*)/"),
-                            onConfirm = function(dir_path)
-                                self:newFile(dir_path .. "/", caller_callback)
-                            end,
-                        }
-                        UIManager:show(path_chooser)
-                    end,
-                },
-            },
-            {
-                {
-                    text = _("Cancel"),
-                    id = "close",
-                    callback = function()
-                        UIManager:close(file_input)
-                    end,
-                },
-                {
-                    text = _("Edit"),
-                    callback = function()
-                        local file_path = file_input:getInputText()
-                        UIManager:close(file_input)
-                        -- Remember last_path
-                        self.last_path = file_path:match("(.*)/")
-                        if self.last_path == "" then self.last_path = "/" end
-                        self:checkEditFile(file_path, false, true, caller_callback)
-                    end,
-                },
-            },
-        },
-    }
-    UIManager:show(file_input)
-    file_input:onShowKeyboard()
+    UIManager:show(ConfirmBox:new{
+        text = _([[To start editing a new file, you will have to:
+
+- First select a directory
+- Then enter a name for the new file
+- And start editing it
+
+Do you want to proceed?]]),
+        ok_text = _("Yes"),
+        cancel_text = _("No"),
+        ok_callback = function()
+            local path_chooser = PathChooser:new{
+                select_directory = true,
+                select_file = false,
+                height = Screen:getHeight(),
+                path = self.last_path,
+                onConfirm = function(dir_path)
+                    local file_input
+                    file_input = InputDialog:new{
+                        title =  _("Enter filename"),
+                        input = dir_path == "/" and "/" or dir_path .. "/",
+                        buttons = {{
+                            {
+                                text = _("Cancel"),
+                                callback = function()
+                                    UIManager:close(file_input)
+                                end,
+                            },
+                            {
+                                text = _("Edit"),
+                                callback = function()
+                                    local file_path = file_input:getInputText()
+                                    UIManager:close(file_input)
+                                    -- Remember last_path
+                                    self.last_path = file_path:match("(.*)/")
+                                    if self.last_path == "" then self.last_path = "/" end
+                                    self:checkEditFile(file_path, false, true)
+                                end,
+                            },
+                        }},
+                    }
+                    UIManager:show(file_input)
+                    file_input:onShowKeyboard()
+                end,
+            }
+            UIManager:show(path_chooser)
+        end,
+    })
 end
 
 function TextEditor:chooseFile()
     self:loadSettings()
     local path_chooser = PathChooser:new{
+        select_file = true,
         select_directory = false,
+        detailed_file_info = true,
+        height = Screen:getHeight(),
         path = self.last_path,
         onConfirm = function(file_path)
             -- Remember last_path only when we select a file from it
@@ -403,29 +297,29 @@ function TextEditor:chooseFile()
     UIManager:show(path_chooser)
 end
 
-function TextEditor:checkEditFile(file_path, from_history, possibly_new_file, caller_callback)
-    self:loadSettings()
+function TextEditor:checkEditFile(file_path, from_history, possibly_new_file)
     local attr = lfs.attributes(file_path)
     if not possibly_new_file and not attr then
         UIManager:show(ConfirmBox:new{
-            text = T(_("This file does not exist:\n\n%1\n\nDo you want to create it and start editing it?"), BD.filepath(file_path)),
-            ok_text = _("Create"),
+            text = T(_("This file does not exist anymore:\n\n%1\n\nDo you want to create it and start editing it?"), file_path),
+            ok_text = _("Yes"),
+            cancel_text = _("No"),
             ok_callback = function()
                 -- go again thru there with possibly_new_file=true
-                self:checkEditFile(file_path, from_history, true, caller_callback)
+                self:checkEditFile(file_path, from_history, true)
             end,
         })
         return
     end
     if attr then
         -- File exists: get its real path with symlink and ../ resolved
-        file_path = ffiUtil.realpath(file_path)
+        file_path = ffiutil.realpath(file_path)
         attr = lfs.attributes(file_path)
     end
     if attr then -- File exists
         if attr.mode ~= "file" then
             UIManager:show(InfoMessage:new{
-                text = T(_("This file is not a regular file:\n\n%1"), BD.filepath(file_path))
+                text = T(_("This file is not a regular file:\n\n%1"), file_path)
             })
             return
         end
@@ -434,7 +328,7 @@ function TextEditor:checkEditFile(file_path, from_history, possibly_new_file, ca
         -- No need to warn if readonly, the user will know it when we open
         -- without keyboard and the Save button says "Read only".
         local readonly = true
-        local file = io.open(file_path, "r+b")
+        local file = io.open(file_path, 'r+b')
         if file then
             file:close()
             readonly = false
@@ -443,40 +337,51 @@ function TextEditor:checkEditFile(file_path, from_history, possibly_new_file, ca
         if not from_history and attr.size > self.min_file_size_warn then
             UIManager:show(ConfirmBox:new{
                 text = T(_("This file is %2:\n\n%1\n\nAre you sure you want to open it?\n\nOpening big files may take some time."),
-                    BD.filepath(file_path), util.getFriendlySize(attr.size)),
-                ok_text = _("Open"),
+                    file_path, util.getFriendlySize(attr.size)),
+                ok_text = _("Yes"),
+                cancel_text = _("No"),
                 ok_callback = function()
-                    self:editFile(file_path, readonly, caller_callback)
+                    self:editFile(file_path, readonly)
                 end,
             })
         else
-            self:editFile(file_path, readonly, caller_callback)
+            self:editFile(file_path, readonly)
         end
     else -- File does not exist
-        -- Try to create it just to check if writing to it later is possible
+        -- Try to create it just to check if writting to it later is possible
         local file, err = io.open(file_path, "wb")
         if file then
             -- Clean it, we'll create it again on Save, and allow closing
             -- without saving in case the user has changed his mind.
             file:close()
             os.remove(file_path)
-            self:editFile(file_path, nil, caller_callback)
+            self:editFile(file_path)
         else
             UIManager:show(InfoMessage:new{
-                text = T(_("This file can not be created:\n\n%1\n\nReason: %2"), BD.filepath(file_path), err)
+                text = T(_("This file can not be created:\n\n%1\n\nReason: %2"), file_path, err)
             })
             return
         end
     end
 end
 
-function TextEditor:saveFileContent(file_path, content, caller_callback)
-    local ok, err = util.writeToFile(content, file_path)
-    if ok then
-        if self.ui.file_chooser then
-            self.ui.file_chooser:refreshPath()
-        end
-        self.caller_callback = caller_callback -- will be called in self.input.close_callback
+function TextEditor:readFileContent(file_path)
+    local file = io.open(file_path, "rb")
+    if not file then
+        -- We checked file existence before, so assume it's
+        -- because it's a new file
+        return ""
+    end
+    local file_content = file:read("*all")
+    file:close()
+    return file_content
+end
+
+function TextEditor:saveFileContent(file_path, content)
+    local file, err = io.open(file_path, "wb")
+    if file then
+        file:write(content)
+        file:close()
         logger.info("TextEditor: saved file", file_path)
         return true
     end
@@ -494,66 +399,46 @@ function TextEditor:deleteFile(file_path)
     return false, err
 end
 
-function TextEditor:editFile(file_path, readonly, caller_callback)
+function TextEditor:editFile(file_path, readonly)
     self:addToHistory(file_path)
     local directory, filename = util.splitFilePathName(file_path) -- luacheck: no unused
     local filename_without_suffix, filetype = util.splitFileNameSuffix(filename) -- luacheck: no unused
     local is_lua = filetype:lower() == "lua"
-    local para_direction_rtl = nil -- use UI language direction
-    if self.force_ltr_para_direction then
-        para_direction_rtl = false -- force LTR
-    end
-    local buttons_first_row = {}  -- First button on first row, that will be filled with Reset|Save|Close
-    if is_lua then
-        table.insert(buttons_first_row, {
-            text = _("Lua check"),
-            callback = function()
-                local parse_error = util.checkLuaSyntax(self.input:getInputText())
-                if parse_error then
-                    UIManager:show(InfoMessage:new{
-                        text = T(_("Lua syntax check failed:\n\n%1"), parse_error)
-                    })
-                else
-                    UIManager:show(Notification:new{
-                        text = T(_("Lua syntax OK")),
-                    })
-                end
-            end,
-        })
-    end
-    if self.qr_code_export then
-        table.insert(buttons_first_row, {
-            text = _("QR"),
-            enabled_func = function()
-                return self.input:getInputText() ~= ""
-            end,
-            callback = function()
-                self:showQRExport()
-            end,
-        })
-    end
-    self.input = InputDialog:new{
+    local input
+    input = InputDialog:new{
         title =  filename,
-        input = util.readFromFile(file_path, "rb"),
+        input = self:readFileContent(file_path),
         input_face = Font:getFace(self.font_face, self.font_size),
-        para_direction_rtl = para_direction_rtl,
-        auto_para_direction = self.auto_para_direction,
         fullscreen = true,
         condensed = true,
         allow_newline = true,
         cursor_at_end = false,
         readonly = readonly,
         add_nav_bar = true,
-        title_bar_left_icon = "appbar.menu",
-        title_bar_left_icon_tap_callback = function() self:showMenu() end,
-        rotation_enabled = true,
-        keyboard_visible = self.show_keyboard_on_start, -- InputDialog will enforce false if readonly
         scroll_by_pan = true,
-        buttons = {buttons_first_row},
-        -- Store/retrieve view and cursor position callback
+        buttons = is_lua and {{
+            -- First button on first row, that will be filled with Reset|Save|Close
+            {
+                text = _("Check Lua"),
+                callback = function()
+                    local parse_error = util.checkLuaSyntax(input:getInputText())
+                    if parse_error then
+                        UIManager:show(InfoMessage:new{
+                            text = T(_("Lua syntax check failed:\n\n%1"), parse_error)
+                        })
+                    else
+                        UIManager:show(Notification:new{
+                            text = T(_("Lua syntax OK")),
+                            timeout = 2,
+                        })
+                    end
+                end,
+            },
+        }},
+        -- Set/save view and cursor position callback
         view_pos_callback = function(top_line_num, charpos)
-            -- This same callback is called with no arguments on init to retrieve the stored initial position,
-            -- and with arguments to store the final position on close.
+            -- This same callback is called with no argument to get initial position,
+            -- and with arguments to give back final position when closed.
             if top_line_num and charpos then
                 self.last_view_pos[file_path] = {top_line_num, charpos}
             else
@@ -566,28 +451,21 @@ function TextEditor:editFile(file_path, readonly, caller_callback)
         end,
         -- File restoring callback
         reset_callback = function(content) -- Will add a Reset button
-            return util.readFromFile(file_path, "rb") or "", _("Text reset to last saved content")
+            return self:readFileContent(file_path), _("Text reset to last saved content")
         end,
         -- Close callback
         close_callback = function()
-            if self.input.rotation_mode_backup and self.input.rotation_mode_backup ~= Screen:getRotationMode() then
-                Screen:setRotationMode(self.input.rotation_mode_backup)
-            end
-            if self.caller_callback then
-                self.caller_callback(file_path)
-                self.caller_callback = nil
-            end
             self:execWhenDoneFunc()
         end,
         -- File saving callback
         save_callback = function(content, closing) -- Will add Save/Close buttons
-            if readonly then
+            if self.readonly then
                 -- We shouldn't be called if read-only, but just in case
                 return false, _("File is read only")
             end
             if content and #content > 0 then
                 if not is_lua then
-                    local ok, err = self:saveFileContent(file_path, content, caller_callback)
+                    local ok, err = self:saveFileContent(file_path, content)
                     if ok then
                         return true, _("File saved")
                     else
@@ -596,25 +474,25 @@ function TextEditor:editFile(file_path, readonly, caller_callback)
                 end
                 local parse_error = util.checkLuaSyntax(content)
                 if not parse_error then
-                    local ok, err = self:saveFileContent(file_path, content, caller_callback)
+                    local ok, err = self:saveFileContent(file_path, content)
                     if ok then
                         return true, _("Lua syntax OK, file saved")
                     else
                         return false, T(_("Failed saving file: %1"), err)
                     end
                 end
-                local save_anyway = Trapper:confirm(T(_([[
-Lua syntax check failed:
+                local save_anyway = Trapper:confirm(T(_(
+[[Lua syntax check failed:
 
 %1
 
 KOReader may crash if this is saved.
 Do you really want to save to this file?
 
-%2]]), parse_error, BD.filepath(file_path)),  _("Do not save"), _("Save anyway"))
+%2]]), parse_error, file_path),  _("Do not save"), _("Save anyway"))
                 -- we'll get the safer "Do not save" on tap outside
                 if save_anyway then
-                    local ok, err = self:saveFileContent(file_path, content, caller_callback)
+                    local ok, err = self:saveFileContent(file_path, content)
                     if ok then
                         return true, _("File saved")
                     else
@@ -624,11 +502,11 @@ Do you really want to save to this file?
                     return false, false -- no need for more InfoMessage
                 end
             else -- If content is empty, propose to delete the file
-                local delete_file = Trapper:confirm(T(_([[
-Text content is empty.
+                local delete_file = Trapper:confirm(T(_(
+[[Text content is empty.
 Do you want to keep this file as empty, or do you prefer to delete it?
 
-%1]]), BD.filepath(file_path)), _("Keep empty file"), _("Delete file"))
+%1]]), file_path), _("Keep empty file"), _("Delete file"))
                 -- we'll get the safer "Keep empty file" on tap outside
                 if delete_file then
                     local ok, err = self:deleteFile(file_path)
@@ -638,7 +516,7 @@ Do you want to keep this file as empty, or do you prefer to delete it?
                         return false, T(_("Failed deleting file: %1"), err)
                     end
                 else
-                    local ok, err = self:saveFileContent(file_path, content, caller_callback)
+                    local ok, err = self:saveFileContent(file_path, content)
                     if ok then
                         return true, _("File saved")
                     else
@@ -649,206 +527,14 @@ Do you want to keep this file as empty, or do you prefer to delete it?
         end,
 
     }
-    UIManager:show(self.input)
-    if self.show_keyboard_on_start and not readonly then
-        self.input:onShowKeyboard()
-    end
-    -- Note about readonly:
+    UIManager:show(input)
+    input:onShowKeyboard()
+    -- Note about self.readonly:
     -- We might have liked to still show keyboard even if readonly, just
     -- to use the arrow keys for line by line scrolling with cursor.
     -- But it's easier to just let InputDialog and InputText do their
     -- own readonly prevention (and on devices where we run as root, we
     -- will hardly ever be readonly).
-end
-
--- reopen last edited file. Invokeable with gesture:
-function TextEditor:onOpenLastEditedFile()
-    self:loadSettings()
-    if #self.history > 0 then
-        local file_path = self.history[1]
-        self:checkEditFile(file_path, true)
-    else
-        self:chooseFile()
-    end
-end
-
--- quickly open and edit a file
--- calls the done_callback function on close
-function TextEditor:quickEditFile(file_path, done_callback, possible_new_file)
-    if done_callback then
-        self.whenDoneFunc = done_callback
-    end
-    self:checkEditFile(file_path, possible_new_file or false)
-end
-
--- TitleBar left button tap
-function TextEditor:showMenu()
-    local dialog
-    local buttons = {}
-    local optionsutil = require("ui/data/optionsutil")
-    for i, mode in ipairs(optionsutil.rotation_modes) do
-        buttons[i] = {{
-            text = optionsutil.rotation_labels[i],
-            enabled_func = function()
-                return optionsutil.rotation_modes[i] ~= Screen:getRotationMode()
-            end,
-            callback = function()
-                UIManager:close(dialog)
-                self.input:onSetRotationMode(optionsutil.rotation_modes[i])
-            end,
-        }}
-    end
-    dialog = ButtonDialog:new{
-        shrink_unneeded_width = true,
-        buttons = buttons,
-        anchor = function()
-            return self.input.title_bar.left_button.image.dimen
-        end,
-        modal = true,
-    }
-    UIManager:show(dialog)
-end
-
--- Returns lines from..to (1-based, inclusive) of text, joined with "\n".
--- Lines are "\n"-delimited, which matches the editor's own line numbers.
--- Lines before `from` are skipped without creating any strings, and the walk
--- stops at `to`.
-local function extractLines(text, from, to)
-    local out = {}
-    local pos, n = 1, 1
-    while n <= to do
-        local nl = text:find("\n", pos, true)
-        if n >= from then
-            -- CRLF files are read in "rb" mode, so drop the trailing "\r"
-            out[#out + 1] = (text:sub(pos, (nl or #text + 1) - 1):gsub("\r$", ""))
-        end
-        if not nl then break end
-        pos = nl + 1
-        n = n + 1
-    end
-    return table.concat(out, "\n")
-end
-
--- Locates the last "./luajit: ... [C]: at" crash excerpt (including the line
--- immediately following "[C]: at"), returning its 1-based (from, to) line range.
-local function findLastCrash(text, last_line)
-    -- Anchored greedy match: one C-level pass, selects the last match
-    local last_luajit = text:match("^.*()%./luajit:")
-    local last_c_at = text:find("[C]: at", last_luajit, true)
-    if not (last_luajit and last_c_at) then return nil, nil end
-
-    -- Count newlines up to each anchor in a single forward pass.
-    local line, pos, nl = 1, 1
-    while true do
-        nl = text:find("\n", pos, true)
-        if not nl or nl >= last_luajit then break end
-        line = line + 1
-        pos = nl + 1
-    end
-    local crash_from = line
-
-    while nl and nl < last_c_at do
-        line = line + 1
-        nl = text:find("\n", nl + 1, true)
-    end
-    local crash_to = line + 1
-    if last_line and crash_to > last_line then
-        crash_to = last_line
-    end
-    return crash_from, crash_to
-end
-
--- Export the whole text, or a range of lines, as QR code(s).
-function TextEditor:showQRExport()
-    local text = self.input:getInputText()
-    if text == "" then return end
-
-    -- Count lines without materialising anything: one per "\n", plus the final
-    -- line unless the text ends with a newline (that would only add an empty
-    -- "line", which we don't offer).
-    local last = 0
-    for __ in text:gmatch("\n") do
-        last = last + 1
-    end
-    if text:sub(-1) ~= "\n" then
-        last = last + 1
-    end
-
-    local invert_bidi = self.ui and self.ui.view and self.ui.view:shouldInvertBiDiLayoutMirroring()
-    local function showQR(qr_text, from_line, to_line)
-        if not qr_text:find("%S") then
-            UIManager:show(InfoMessage:new{
-                text = _("Nothing to export in the selected lines"),
-            })
-            return
-        end
-        -- Strip the leading dot from "./luajit:" crash logs so [some] scanners
-        -- do not misclassify the relative path + colon as a malformed URI.
-        if text:sub(1, 9) == "./luajit:" then
-            -- Normally we wouldn't want to alter the payload, but this seems the most
-            -- likely encounter of this limitation and doesn't affect the actual content.
-            text = text:sub(2)
-        end
-        local title
-        if from_line and to_line and from_line ~= to_line then
-            title = T(_("Lines %1-%2"), from_line, to_line)
-        else
-            title = T(_("Line %1"), from_line or 1)
-        end
-        UIManager:show(QRMessage:new{
-            text = qr_text,
-            title = title,
-            invert_bidi = invert_bidi,
-        })
-    end
-
-    -- Nothing to choose with a single line
-    if last <= 1 then
-        showQR(extractLines(text, 1, 1))
-        return
-    end
-    local is_crash_log = self.input.title == "crash.log" and not Device:isAndroid()
-
-    -- Start the range at the line shown on the nav bar button, clamped to the
-    -- offered range (curr_line_num can point at the trimmed trailing line).
-    local current_line = math.max(1, math.min(self.input.curr_line_num or 1, last))
-    local hold_step = math.max(4, math.floor(last / 20))
-    UIManager:show(DoubleSpinWidget:new{
-        title_text = _("Generate QR code from line range"),
-        left_text = _("From"),
-        right_text = _("To"),
-        left_min = 1,
-        left_max = last,
-        left_value = current_line,
-        left_hold_step = hold_step,
-        left_precision = "%d",
-        right_min = 1,
-        right_max = last,
-        right_value = last,
-        right_hold_step = hold_step,
-        right_precision = "%d",
-        is_range = true,
-        ok_always_enabled = true,
-        ok_text = _("Generate code"),
-        callback = function(from, to)
-            if from > to then
-                from, to = to, from
-            end
-            showQR(extractLines(text, from, to), from, to)
-        end,
-        extra_text = is_crash_log and _("Export last crash traceback") or nil,
-        extra_callback = is_crash_log and function()
-            local crash_from, crash_to = findLastCrash(text, last)
-            if crash_from and crash_to then
-                showQR(extractLines(text, crash_from, crash_to), crash_from, crash_to)
-            else
-                UIManager:show(InfoMessage:new{
-                    text = _("No crash traceback found" .. "\n\n" ..
-                "Note: This uses a heuristic to locate the last crash traceback, which may not be accurate for all crash logs."),
-                })
-            end
-        end or nil,
-    })
 end
 
 return TextEditor

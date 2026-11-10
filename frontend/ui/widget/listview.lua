@@ -17,15 +17,15 @@ Example:
                 background = Blitbuffer.COLOR_WHITE,
                 TextWidget:new{
                     text = "foo",
-                    face = Font:getFace("cfont"),
+                    fact = Font:getFace("cfont"),
                 }
             },
             FrameContainer:new{
                 bordersize = 0,
-                background = Blitbuffer.COLOR_LIGHT_GRAY,
+                background = Blitbuffer.COLOR_LIGHT_GREY,
                 TextWidget:new{
                     text = "bar",
-                    face = Font:getFace("cfont"),
+                    fact = Font:getFace("cfont"),
                 }
             },
             -- You can add as many widgets as you want here...
@@ -36,7 +36,6 @@ Note that ListView is created mainly to be used as a building block for other
 widgets like @{ui.widget.networksetting|NetworkSetting}, so they can share the same pagination code.
 ]]
 
-local BD = require("ui/bidi")
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local FrameContainer = require("ui/widget/container/framecontainer")
@@ -46,19 +45,19 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local Size = require("ui/size")
 local VerticalGroup = require("ui/widget/verticalgroup")
 
-local ListView = InputContainer:extend{
+local ListView = InputContainer:new{
     width = nil,
     height = nil,
     padding = nil,
     item_height = nil,
-    items = nil,
+    itmes = nil,
 }
 
 function ListView:init()
     if #self.items <= 0 then return end
 
     self.show_page = 1
-    self.dimen = Geom:new{x = 0, y = 0, w = self.width, h = self.height}
+    self.dimen = Geom:new{w = self.width, h = self.height}
 
     if Device:isTouchDevice() then
         self.ges_events.Swipe = {
@@ -114,11 +113,10 @@ function ListView:prevPage()
 end
 
 function ListView:onSwipe(arg, ges_ev)
-    local direction = BD.flipDirectionIfMirroredUILayout(ges_ev.direction)
-    if direction == "west" then
+    if ges_ev.direction == "west" then
         self:nextPage()
         return true
-    elseif direction == "east" then
+    elseif ges_ev.direction == "east" then
         self:prevPage()
         return true
     end

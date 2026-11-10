@@ -1,5 +1,6 @@
 local _ = require("gettext")
 return {
-    fullname = _("Reading statistics"),
+    name = "statistics",
+    fullname = _("Reader statistics"),
     description = _([[Keeps and displays your reading statistics.]]),
 }

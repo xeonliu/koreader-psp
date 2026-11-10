@@ -31,7 +31,7 @@ local service = [[
 }
 ]]
 
-describe("Lua Spore modules #notest", function()
+describe("Lua Spore modules #notest #nocov", function()
     local Spore, client
     setup(function()
         require("commonrequire")
@@ -53,7 +53,7 @@ describe("Lua Spore modules #notest", function()
     end)
 end)
 
-describe("Lua Spore modules with async http request #notest", function()
+describe("Lua Spore modules with async http request #notest #nocov", function()
     local client, UIManager
 
     setup(function()
@@ -102,8 +102,7 @@ describe("Lua Spore modules with async http request #notest", function()
         client:enable("Format.JSON")
         client:enable("AsyncHTTP", {thread = co})
         coroutine.resume(co)
-        UIManager:setRunForeverMode()
-        UIManager:run()
+        UIManager:runForever()
     end)
 
     it("should complete POST request", function()
@@ -118,7 +117,6 @@ describe("Lua Spore modules with async http request #notest", function()
         client:enable("Format.JSON")
         client:enable("AsyncHTTP", {thread = co})
         coroutine.resume(co)
-        UIManager:setRunForeverMode()
-        UIManager:run()
+        UIManager:runForever()
     end)
 end)

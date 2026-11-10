@@ -1,9 +1,8 @@
 describe("luasettings module", function()
-    local DataStorage, Settings
+    local Settings
     setup(function()
         require("commonrequire")
-        DataStorage = require("datastorage")
-        Settings = require("luasettings"):open(DataStorage:getDataDir() .. "/this-is-not-a-valid-file")
+        Settings = require("frontend/luasettings"):open("this-is-not-a-valid-file")
     end)
 
     it("should handle undefined keys", function()
@@ -46,7 +45,7 @@ describe("luasettings module", function()
 
         Settings:saveSetting("key", {
             a = "b",
-            c = "True",
+            c = "true",
             d = false,
         })
 
@@ -56,7 +55,7 @@ describe("luasettings module", function()
         assert.True(child:has("a"))
         assert.are.equal(child:readSetting("a"), "b")
         assert.True(child:has("c"))
-        assert.False(child:isTrue("c")) -- It's a string, not a bool!
+        assert.True(child:isTrue("c"))
         assert.True(child:has("d"))
         assert.True(child:isFalse("d"))
         assert.False(child:isTrue("e"))
@@ -68,9 +67,7 @@ describe("luasettings module", function()
     end)
 
     describe("table wrapper", function()
-        setup(function()
-            Settings:delSetting("key")
-        end)
+        Settings:delSetting("key")
 
         it("should add item to table", function()
             Settings:addTableItem("key", 1)

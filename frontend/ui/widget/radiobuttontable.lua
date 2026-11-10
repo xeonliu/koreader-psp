@@ -1,37 +1,36 @@
---[[--
-A button table to be used in dialogs and widgets.
-]]
-
 local Blitbuffer = require("ffi/blitbuffer")
-local CheckButton = require("ui/widget/checkbutton")
+local Device = require("device")
 local FocusManager = require("ui/widget/focusmanager")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local LineWidget = require("ui/widget/linewidget")
+local RadioButton = require("ui/widget/radiobutton")
 local Size = require("ui/size")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local dbg = require("dbg")
-local Device = require("device")
 local Screen = Device.screen
 
-local RadioButtonTable = FocusManager:extend{
+local RadioButtonTable = FocusManager:new{
     width = Screen:getWidth(),
-    radio_buttons = nil, -- must be provided by the caller
+    radio_buttons = {
+        {
+            {text="Cancel", enabled=false, callback=nil},
+            {text="OK", enabled=true, callback=nil},
+        },
+    },
     sep_width = Size.line.medium,
-    padding = Size.padding.button, -- between buttons in a row
+    padding = Size.padding.button,
 
     zero_sep = false,
-    no_sep = false, -- if true: no horizontal separator/span before and after the table
-    face = Font:getFace("cfont", 22), -- can be overriden by a button face
-    button_single_line = nil,
+    face = Font:getFace("cfont", 22),
     _first_button = nil,
     checked_button = nil,
-    button_select_callback = nil,
 }
 
 function RadioButtonTable:init()
+    self.selected = { x = 1, y = 1 }
     self.radio_buttons_layout = {}
     self.container = VerticalGroup:new{ width = self.width }
     table.insert(self, self.container)
@@ -45,7 +44,6 @@ function RadioButtonTable:init()
         self:addHorizontalSep(false, false, true)
     end
 
-    local one_sizer_space = self.sep_width + 2 * self.padding
     local row_cnt = #self.radio_buttons
 
     for i = 1, row_cnt do
@@ -53,40 +51,33 @@ function RadioButtonTable:init()
         local horizontal_group = HorizontalGroup:new{}
         local row = self.radio_buttons[i]
         local column_cnt = #row
-        local button_width = math.floor((self.width - one_sizer_space * (column_cnt - 1)) / column_cnt)
+        local sizer_space = self.sep_width * (column_cnt - 1) + 2
         for j = 1, column_cnt do
             local btn_entry = row[j]
-            local button = CheckButton:new{
+            local button = RadioButton:new{
                 text = btn_entry.text,
-                checkable = btn_entry.checkable,
-                checked = btn_entry.checked,
                 enabled = btn_entry.enabled,
-                radio = true,
+                checked = btn_entry.checked,
                 provider = btn_entry.provider,
-                hold_callback = btn_entry.hold_callback,
 
-                bold = btn_entry.bold,
-                fgcolor = btn_entry.fgcolor,
-                bgcolor = btn_entry.bgcolor,
-
-                row = i,
-                width = button_width,
+                width = (self.width - sizer_space)/column_cnt,
+                max_width = (self.width - sizer_space)/column_cnt - 2*self.sep_width - 2*self.padding,
                 bordersize = 0,
                 margin = 0,
                 padding = 0,
-                face = btn_entry.face or self.face,
-                single_line = self.button_single_line,
+                face = self.face,
 
                 show_parent = self.show_parent or self,
                 parent = self.parent or self,
             }
             local button_callback = function()
-                self:checkButton(button)
-                if self.button_select_callback then
-                    self.button_select_callback(btn_entry)
-                end
+                self:_checkButton(button)
             end
             button.callback = button_callback
+
+            if i == 1 and j == 1 then
+                self._first_button = button
+            end
 
             if button.checked and not self.checked_button then
                 self.checked_button = button
@@ -95,16 +86,17 @@ function RadioButtonTable:init()
                 error("RadioButtonGroup: multiple checked RadioButtons")
             end
 
+            local button_dim = button:getSize()
+            local vertical_sep = LineWidget:new{
+                background = Blitbuffer.COLOR_GREY,
+                dimen = Geom:new{
+                    w = self.sep_width,
+                    h = button_dim.h,
+                }
+            }
             self.radio_buttons_layout[i][j] = button
             table.insert(horizontal_group, button)
             if j < column_cnt then
-                local vertical_sep = LineWidget:new{
-                    background = Blitbuffer.COLOR_DARK_GRAY,
-                    dimen = Geom:new{
-                        w = self.sep_width,
-                        h = button:getSize().h,
-                    }
-                }
                 table.insert(horizontal_group, vertical_sep)
             end
         end -- end for each button
@@ -116,29 +108,28 @@ function RadioButtonTable:init()
     self:addHorizontalSep(true, false, false)
 
     -- check first entry unless otherwise specified
-    self._first_button = self.radio_buttons_layout[1][1]
     if not self.checked_button then
-        self._first_button:toggleCheck()
+        self._first_button:check()
         self.checked_button = self._first_button
     end
 
     if Device:hasDPad() or Device:hasKeyboard() then
         self.layout = self.radio_buttons_layout
-        self:refocusWidget()
+        self.layout[1][1]:onFocus()
+        self.key_events.SelectByKeyPress = { {{"Press"}} }
     else
         self.key_events = {}  -- deregister all key press event listeners
     end
 end
 
 function RadioButtonTable:addHorizontalSep(vspan_before, add_line, vspan_after, black_line)
-    if self.no_sep then return end
     if vspan_before then
         table.insert(self.container,
                      VerticalSpan:new{ width = Size.span.vertical_default })
     end
     if add_line then
         table.insert(self.container, LineWidget:new{
-            background = black_line and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_DARK_GRAY,
+            background = black_line and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_GREY,
             dimen = Geom:new{
                 w = self.width,
                 h = self.sep_width,
@@ -151,12 +142,17 @@ function RadioButtonTable:addHorizontalSep(vspan_before, add_line, vspan_after, 
     end
 end
 
-function RadioButtonTable:checkButton(button)
-    if not button.checked then
-        self.checked_button:toggleCheck()
-        button:toggleCheck()
-        self.checked_button = button
-    end
+function RadioButtonTable:onSelectByKeyPress()
+    self:getFocusItem().callback()
+end
+
+function RadioButtonTable:_checkButton(button)
+    -- nothing to do
+    if button.checked then return end
+
+    self.checked_button:unCheck()
+    button:check()
+    self.checked_button = button
 end
 
 return RadioButtonTable

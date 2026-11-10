@@ -4,6 +4,9 @@
 [submodule "platform/android/luajit-launcher"]
 	path = platform/android/luajit-launcher
 	url = https://github.com/koreader/android-luajit-launcher.git
+[submodule "platform/ubuntu-touch/ubuntu-touch-sdl"]
+	path = platform/ubuntu-touch/ubuntu-touch-sdl
+	url = https://github.com/Sturmflut/ubuntu-touch-sdl-template
 [submodule "test"]
 	path = test
 	url = https://github.com/koreader/test-data.git
@@ -11,8 +14,4 @@
 [submodule "resources/fonts"]
 	path = resources/fonts
 	url = https://github.com/koreader/koreader-fonts.git
-	shallow = true
-[submodule "l10n"]
-	path = l10n
-	url = https://github.com/koreader/koreader-translations.git
 	shallow = true

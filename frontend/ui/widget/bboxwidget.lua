@@ -8,11 +8,10 @@ local Event = require("ui/event")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local Math = require("optmath")
-local Screen = Device.screen
 local Size = require("ui/size")
 local UIManager = require("ui/uimanager")
 
-local BBoxWidget = InputContainer:extend{
+local BBoxWidget = InputContainer:new{
     page_bbox = nil,
     screen_bbox = nil,
     linesize = Size.line.thick,
@@ -49,16 +48,6 @@ function BBoxWidget:init()
                 }
             }
         }
-    else
-        self._confirm_stage = 1 -- 1 for left-top, 2 for right-bottom
-        self.key_events.MoveIndicatorUp    = { { "Up" },    event="MoveIndicator", args = { 0, -1 } }
-        self.key_events.MoveIndicatorDown  = { { "Down" },  event="MoveIndicator", args = { 0, 1 } }
-        self.key_events.MoveIndicatorLeft  = { { "Left" },  event="MoveIndicator", args = { -1, 0 } }
-        self.key_events.MoveIndicatorRight = { { "Right" }, event="MoveIndicator", args = { 1, 0 } }
-    end
-    if Device:hasKeys() then
-        self.key_events.Close = { { Device.input.group.Back } }
-        self.key_events.Select = { { "Press" } }
     end
 end
 
@@ -81,35 +70,6 @@ function BBoxWidget:paintTo(bb, x, y)
     bb:invertRect(bbox.x0, bbox.y0, self.linesize, bbox.y1 - bbox.y0 + self.linesize)
     -- right edge
     bb:invertRect(bbox.x1, bbox.y0 + self.linesize, self.linesize, bbox.y1 - bbox.y0)
-    if self._confirm_stage == 1 then
-        -- left top indicator
-        self:_drawIndicator(bb, bbox.x0, bbox.y0)
-    elseif self._confirm_stage == 2 then
-        -- right bottom indicator
-        self:_drawIndicator(bb, bbox.x1, bbox.y1)
-    end
-end
-
-function BBoxWidget:_drawIndicator(bb, x, y)
-    local rect = Geom:new({
-        x = x - Size.item.height_default / 2,
-        y = y - Size.item.height_default / 2,
-        w = Size.item.height_default,
-        h = Size.item.height_default,
-    })
-    -- paint big cross line +
-    bb:invertRect(
-        rect.x,
-        rect.y + rect.h / 2 - Size.border.thick / 2,
-        rect.w,
-        Size.border.thick
-    )
-    bb:invertRect(
-        rect.x + rect.w / 2 - Size.border.thick / 2,
-        rect.y,
-        Size.border.thick,
-        rect.h
-    )
 end
 
 -- transform page bbox to screen bbox
@@ -230,82 +190,7 @@ function BBoxWidget:adjustScreenBBox(ges, relative)
         y1 = Math.round(bottom_right.y)
     }
 
-    UIManager:setDirty(self.ui, "ui")
-end
-
-function BBoxWidget:onMoveIndicator(args)
-    local dx, dy = unpack(args)
-    local bbox = self.screen_bbox
-    local move_distance = Size.item.height_default / 4
-    local half_indicator_size = move_distance * 2
-    -- mark edges dirty to redraw
-    -- top edge
-    UIManager:setDirty(self.ui, "ui", Geom:new{
-        x = bbox.x0 - move_distance,
-        y = bbox.y0 - move_distance,
-        w = bbox.x1 - bbox.x0 + move_distance,
-        h = move_distance * 2
-    })
-    -- left edge
-    UIManager:setDirty(self.ui, "ui", Geom:new{
-        x = bbox.x0 - move_distance,
-        y = bbox.y0 - move_distance,
-        w = move_distance * 2,
-        h = bbox.y1 - bbox.y0 + move_distance,
-    })
-    -- right edge
-    UIManager:setDirty(self.ui, "ui", Geom:new{
-        x = bbox.x1 - move_distance,
-        y = bbox.y0 - move_distance,
-        w = move_distance * 2,
-        h = bbox.y1 - bbox.y0 + move_distance,
-    })
-    -- bottom edge
-    UIManager:setDirty(self.ui, "ui", Geom:new{
-        x = bbox.x0 - move_distance,
-        y = bbox.y1 - move_distance,
-        w = bbox.x1 - bbox.x0 + move_distance,
-        h = move_distance * 2,
-    })
-    -- left top indicator
-    UIManager:setDirty(self.ui, "ui", Geom:new{
-        x = bbox.x0 - half_indicator_size - move_distance,
-        y = bbox.y0 - half_indicator_size - move_distance,
-        w = half_indicator_size * 2 + move_distance,
-        h = half_indicator_size * 2 + move_distance
-    })
-    -- bottom right indicator
-    UIManager:setDirty(self.ui, "ui", Geom:new{
-        x = bbox.x1 - half_indicator_size,
-        y = bbox.y1 - half_indicator_size,
-        w = half_indicator_size * 2 + move_distance,
-        h = half_indicator_size * 2 + move_distance
-    })
-    if self._confirm_stage == 1 then
-        local x = self.screen_bbox.x0 + dx * Size.item.height_default / 4
-        local y = self.screen_bbox.y0 + dy * Size.item.height_default / 4
-        local max_x = self.screen_bbox.x1 - Size.item.height_default
-        local max_y = self.screen_bbox.y1 - Size.item.height_default
-        x = (x > 0 and x) or 0
-        x = (x < max_x and x) or max_x
-        y = (y > 0 and y) or 0
-        y = (y < max_y and y) or max_y
-        self.screen_bbox.x0 = Math.round(x)
-        self.screen_bbox.y0 = Math.round(y)
-        return true
-    elseif self._confirm_stage == 2 then
-        local x = self.screen_bbox.x1 + dx * Size.item.height_default / 4
-        local y = self.screen_bbox.y1 + dy * Size.item.height_default / 4
-        local min_x = self.screen_bbox.x0 + Size.item.height_default
-        local min_y = self.screen_bbox.y0 + Size.item.height_default
-        x = (x > min_x and x) or min_x
-        x = (x < Screen:getWidth() and x) or Screen:getWidth()
-        y = (y > min_y and y) or min_y
-        y = (y < Screen:getHeight() and y) or Screen:getHeight()
-        self.screen_bbox.x1 = Math.round(x)
-        self.screen_bbox.y1 = Math.round(y)
-        return true
-    end
+    UIManager:setDirty("all")
 end
 
 function BBoxWidget:getModifiedPageBBox()
@@ -323,7 +208,7 @@ function BBoxWidget:onSwipeAdjust(arg, ges)
 end
 
 function BBoxWidget:onHoldAdjust(arg, ges)
-    --- @fixme this is a dirty hack to disable hold gesture in page cropping
+    -- FIXME: this is a dirty hack to disable hold gesture in page cropping
     -- since Kobo devices may append hold gestures to each swipe gesture rendering
     -- relative replacement impossible. See koreader/koreader#987 at Github.
     --self:adjustScreenBBox(ges)
@@ -336,35 +221,5 @@ function BBoxWidget:onConfirmAdjust(arg, ges)
     end
     return true
 end
-
-function BBoxWidget:onClose()
-    self.ui:handleEvent(Event:new("CancelPageCrop"))
-    return true
-end
-
-function BBoxWidget:onSelect()
-    if not self._confirm_stage or self._confirm_stage == 2 then
-        self.ui:handleEvent(Event:new("ConfirmPageCrop"))
-    else
-        local bbox = self.screen_bbox
-        self._confirm_stage = self._confirm_stage + 1
-        -- left top indicator
-        UIManager:setDirty(self.ui, "ui", Geom:new{
-            x = bbox.x0 - Size.item.height_default / 2,
-            y = bbox.y0 - Size.item.height_default / 2,
-            w = Size.item.height_default,
-            h = Size.item.height_default,
-        })
-        -- right bottom indicator
-        UIManager:setDirty(self.ui, "ui", Geom:new{
-            x = bbox.x1 - Size.item.height_default / 2,
-            y = bbox.y1 - Size.item.height_default / 2,
-            w = Size.item.height_default,
-            h = Size.item.height_default,
-        })
-    end
-    return true
-end
-
 
 return BBoxWidget

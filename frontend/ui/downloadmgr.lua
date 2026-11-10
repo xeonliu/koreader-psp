@@ -14,16 +14,17 @@ Example:
                     -- reinitialize dialog
                 end)
             end,
-        }:chooseDir()
-    end
+    }:chooseDir()
 ]]
 
 local PathChooser = require("ui/widget/pathchooser")
 local UIManager = require("ui/uimanager")
+local Screen = require("device").screen
 local util = require("ffi/util")
 local _ = require("gettext")
 
 local DownloadMgr = {
+    -- title = _("Long press to choose download directory"),
     onConfirm = function() end,
 }
 
@@ -36,18 +37,16 @@ end
 
 --- Displays a PathChooser widget for picking a (download) directory.
 -- @treturn string path chosen by the user
-function DownloadMgr:chooseDir(dir)
-    local path
-    if dir then
-        path = dir
-    else
-        local lastdir = G_reader_settings:readSetting("lastdir")
-        local download_dir = G_reader_settings:readSetting("download_dir")
-        path = download_dir and util.realpath(download_dir .. "/..") or lastdir
-    end
+function DownloadMgr:chooseDir()
+    local lastdir = G_reader_settings:readSetting("lastdir")
+    local download_dir = G_reader_settings:readSetting("download_dir")
+    local path = download_dir and util.realpath(download_dir .. "/..") or lastdir
     local path_chooser = PathChooser:new{
+        title = self.title or true, -- use default title if none provided
+        select_directory = true,
         select_file = false,
         show_files = false,
+        height = Screen:getHeight(),
         path = path,
         onConfirm = function(dir_path)
             self.onConfirm(dir_path)

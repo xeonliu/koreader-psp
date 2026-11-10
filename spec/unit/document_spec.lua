@@ -39,42 +39,48 @@ describe("PDF document module", function()
         local clip1 = doc:clipPagePNGString(pos0, pos1, pboxes, "lighten")
         assert.truthy(clip1)
     end)
+    it("should calculate fast digest", function()
+        assert.is_equal(doc:fastDigest(), "41cce710f34e5ec21315e19c99821415")
+    end)
     it("should close document", function()
         doc:close()
     end)
 end)
 
 describe("EPUB document module", function()
-    local DocumentRegistry, cre
+    local DocumentRegistry
 
     setup(function()
         require("commonrequire")
-        cre = require("libs/libkoreader-cre")
         DocumentRegistry = require("document/documentregistry")
     end)
 
     local doc
     it("should open document", function()
-        doc = DocumentRegistry:openDocument("spec/front/unit/data/juliet.epub")
+        local sample_epub = "spec/front/unit/data/leaves.epub"
+        doc = DocumentRegistry:openDocument(sample_epub)
         assert.truthy(doc)
     end)
     it("should get cover image", function()
         local image = doc:getCoverPageImage()
         assert.truthy(image)
-        assert.are.same(520, image:getWidth())
-        assert.are.same(800, image:getHeight())
+        assert.are.same(image:getWidth(), 442)
+        assert.are.same(image:getHeight(), 616)
+    end)
+    it("should calculate fast digest", function()
+        assert.is_equal(doc:fastDigest(), "59d481d168cca6267322f150c5f6a2a3")
     end)
     it("should register droid sans fallback", function()
+        local fonts_registry = {
+            "Droid Sans Mono",
+            "FreeSans",
+            "FreeSerif",
+            "Noto Sans",
+            "Noto Sans CJK SC",
+            "Noto Serif",
+        }
         local face_list = cre.getFontFaces()
-        local has_droid_sans = false
-        for i, v in ipairs(face_list) do
-            if v == "Droid Sans Mono" then
-                has_droid_sans = true
-                break
-            end
-        end
-        assert.is_true(has_droid_sans)
-        assert.is_true(#face_list >= 10)
+        assert.are.same(fonts_registry, face_list)
     end)
     it("should close document", function()
         doc:close()

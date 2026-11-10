@@ -18,6 +18,7 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
+local RenderText = require("ui/rendertext")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local TextWidget = require("ui/widget/textwidget")
@@ -25,7 +26,7 @@ local UIManager = require("ui/uimanager")
 local Input = Device.input
 local Screen = Device.screen
 
-local TrapWidget = InputContainer:extend{
+local TrapWidget = InputContainer:new{
     modal = true,
     dismiss_callback = function() end,
     text = nil, -- will be invisible if no message given
@@ -41,33 +42,33 @@ function TrapWidget:init()
         h = Screen:getHeight(),
     }
     if Device:hasKeys() then
-        self.key_events.AnyKeyPressed = { { Input.group.Any } }
+        self.key_events = {
+            AnyKeyPressed = { { Input.group.Any },
+                seqtext = "any key", doc = "dismiss" }
+        }
     end
     if Device:isTouchDevice() then
-        self.ges_events = {
-            TapDismiss = {
-                GestureRange:new{ ges = "tap", range = full_screen, }
-            },
-            HoldDismiss = {
-                GestureRange:new{ ges = "hold", range = full_screen, }
-            },
-            SwipeDismiss = {
-                GestureRange:new{ ges = "swipe", range = full_screen, }
-            },
-            PanReleaseDismiss = { -- emitted on mousewheel event
-                GestureRange:new{ ges = "pan_release", range = full_screen, }
-            },
+        self.ges_events.TapDismiss = {
+            GestureRange:new{ ges = "tap", range = full_screen, }
+        }
+        self.ges_events.HoldDismiss = {
+            GestureRange:new{ ges = "hold", range = full_screen, }
+        }
+        self.ges_events.SwipeDismiss = {
+            GestureRange:new{ ges = "swipe", range = full_screen, }
         }
     end
     if self.text then
-        local textw = TextWidget:new{
-            text = self.text,
-            face = self.face,
-        }
+        local textw
         -- Don't make our message reach full screen width, so
         -- it looks like popping from bottom left corner
-        if textw:getWidth() > Screen:getWidth() * 0.9 then
-            -- Text too wide: use TextBoxWidget for multi lines display
+        local tsize = RenderText:sizeUtf8Text(0, Screen:getWidth(), self.face, self.text)
+        if tsize.x < Screen:getWidth() * 0.9 then
+            textw = TextWidget:new{
+                text = self.text,
+                face = self.face,
+            }
+        else -- if text too wide, use TextBoxWidget for multi lines display
             textw = TextBoxWidget:new{
                 text = self.text,
                 face = self.face,
@@ -110,40 +111,39 @@ function TrapWidget:init()
     end
 end
 
-function TrapWidget:_dismissAndResend(evtype, ev)
+function TrapWidget:_dismissAndResent(evtype, ev)
     self.dismiss_callback()
     UIManager:close(self)
     if self.resend_event and evtype and ev then
-        -- There may be some timing issues that could cause crashes, as we
+        -- XXX There may be timing problems that could cause crashes, as we
         -- use nextTick, if the dismiss_callback uses UIManager:scheduleIn()
         -- or has set up some widget that may catch that event while not being
-        -- yet fully initialized.
-        -- (It happened mostly when I had some bug somewhere, and it was a quite
+        -- yet fully initialiazed.
+        -- It happened mostly when I had some bug somewhere, and it was a quite
         -- reliable sign of a bug somewhere, but the stacktrace was unrelated
-        -- to the bug location.)
+        -- to the bug location.
+        -- Fix to avoid crashes: in GestureRange:match(), check that self.range()
+        -- does not return nil before using it:
+        --   if not range or not range:contains(gs.pos) then return false
         UIManager:nextTick(function() UIManager:handleInputEvent(Event:new(evtype, ev)) end)
     end
     return true
 end
 
 function TrapWidget:onAnyKeyPressed(_, ev)
-    return self:_dismissAndResend("KeyPress", ev)
+    return self:_dismissAndResent("KeyPress", ev)
 end
 
 function TrapWidget:onTapDismiss(_, ev)
-    return self:_dismissAndResend("Gesture", ev)
+    return self:_dismissAndResent("Gesture", ev)
 end
 
 function TrapWidget:onHoldDismiss(_, ev)
-    return self:_dismissAndResend("Gesture", ev)
+    return self:_dismissAndResent("Gesture", ev)
 end
 
 function TrapWidget:onSwipeDismiss(_, ev)
-    return self:_dismissAndResend("Gesture", ev)
-end
-
-function TrapWidget:onPanReleaseDismiss(_, ev)
-    return self:_dismissAndResend("Gesture", ev)
+    return self:_dismissAndResent("Gesture", ev)
 end
 
 function TrapWidget:onShow()
@@ -161,6 +161,7 @@ function TrapWidget:onCloseWidget()
             return "ui", self.frame.dimen
         end)
     end
+    return true
 end
 
 return TrapWidget

@@ -1,37 +1,27 @@
+require "defaults"
+package.path = "?.lua;common/?.lua;rocks/share/lua/5.1/?.lua;frontend/?.lua;" .. package.path
+package.cpath = "?.so;common/?.so;/usr/lib/lua/?.so;rocks/lib/lua/5.1/?.so;" .. package.cpath
+
 -- turn off debug by default and set log level to warning
 require("dbg"):turnOff()
 local logger = require("logger")
 logger:setLevel(logger.levels.warn)
 
-local DataStorage = require("datastorage")
-require("libs/libkoreader-lfs").mkdir(DataStorage:getHistoryDir()) -- for legacy history tests
-
--- global defaults
-os.remove(DataStorage:getDataDir() .. "/defaults.tests.lua")
-os.remove(DataStorage:getDataDir() .. "/defaults.tests.lua.old")
-G_defaults = require("luadefaults"):open(DataStorage:getDataDir() .. "/defaults.tests.lua")
-
 -- global reader settings
-os.remove(DataStorage:getDataDir() .. "/settings.tests.lua")
-os.remove(DataStorage:getDataDir() .. "/settings.tests.lua.old")
-G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.tests.lua")
-G_reader_settings:saveSetting("document_metadata_folder", "dir")
+local DataStorage = require("datastorage")
+os.remove(DataStorage:getDataDir().."/settings.reader.lua")
+G_reader_settings = require("luasettings"):open(".reader")
 
 -- global einkfb for Screen (do not show SDL window)
 einkfb = require("ffi/framebuffer") --luacheck: ignore
 einkfb.dummy = true --luacheck: ignore
 
-local Device = require("device")
-
 -- init output device
-local Screen = Device.screen
+local Screen = require("device").screen
 Screen:init()
 
-local CanvasContext = require("document/canvascontext")
-CanvasContext:init(Device)
-
 -- init input device (do not show SDL window)
-local Input = Device.input
+local Input = require("device").input
 Input.dummy = true
 
 package.unload = function(module)
@@ -54,36 +44,46 @@ package.reload = function(name)
     return require(name)
 end
 
-function disable_plugins()
-    local PluginLoader = require("pluginloader")
-    PluginLoader.enabled_plugins = {}
-    PluginLoader.disabled_plugins = {}
-    PluginLoader.loaded_plugins = {}
-end
-
-function load_plugin(name)
-    local PluginLoader = require("pluginloader")
-    local t = PluginLoader:_discover()
-    local plugin_id = name:gsub("%.koplugin$", "")
-    for _, v in ipairs(t) do
-        if v.name == plugin_id then
-            PluginLoader:_load{v}
-            return
+package.unloadAll = function()
+    local candidates = {
+        "spec/",
+        "frontend/",
+        "plugins/",
+        "datastorage.lua",
+        "defaults.lua",
+    }
+    local pending = {}
+    for name, _ in pairs(package.loaded) do
+        local path = package.searchpath(name, package.path)
+        if path ~= nil then
+            for _, candidate in ipairs(candidates) do
+                if path:find(candidate) == 1 then
+                    table.insert(pending, name)
+                end
+            end
         end
     end
-    assert(false)
+    for _, name in ipairs(pending) do
+        if name ~= "commonrequire" then
+            assert(package.unload(name))
+        end
+    end
+    return #pending
 end
 
-function fastforward_ui_events()
-    local UIManager = require("ui/uimanager")
-    -- Fast forward all scheduled tasks.
-    UIManager:shiftScheduledTasksBy(-1e9)
-    -- Fix hang when running tests with our docker base image SDL.
-    UIManager:setInputTimeout(0)
-    -- And run the UI manager's input loop once.
-    UIManager:handleInput()
+local background_runner
+requireBackgroundRunner = function()
+    require("pluginshare").stopBackgroundRunner = nil
+    if background_runner == nil then
+        local package_path = package.path
+        package.path = "plugins/backgroundrunner.koplugin/?.lua;" .. package.path
+        background_runner = dofile("plugins/backgroundrunner.koplugin/main.lua")
+        package.path = package_path
+    end
+    return background_runner
 end
 
-function screenshot(screen, filename)
-    screen:shot(DataStorage:getDataDir() .. "/screenshots/" .. filename)
+stopBackgroundRunner = function()
+    background_runner = nil
+    require("pluginshare").stopBackgroundRunner = true
 end

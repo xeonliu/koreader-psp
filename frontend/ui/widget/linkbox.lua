@@ -7,9 +7,9 @@ local Size = require("ui/size")
 local UIManager = require("ui/uimanager")
 local Screen = Device.screen
 
-local LinkBox = InputContainer:extend{
+local LinkBox = InputContainer:new{
     box = nil,
-    color = Blitbuffer.COLOR_DARK_GRAY,
+    color = Blitbuffer.COLOR_GREY,
     radius = 0,
     bordersize = Size.line.medium,
 }
@@ -38,6 +38,7 @@ function LinkBox:onCloseWidget()
     UIManager:setDirty(nil, function()
         return "partial", self.box
     end)
+    return true
 end
 
 function LinkBox:onShow()

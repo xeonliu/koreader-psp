@@ -4,8 +4,6 @@ menu_items and a separate menu order.
 ]]
 
 local DataStorage = require("datastorage")
-local Dbg = require("dbg")
-local FFIUtil = require("ffi/util")
 local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
 local _ = require("gettext")
@@ -23,10 +21,10 @@ local MenuSorter = {
 function MenuSorter:readMSSettings(config_prefix)
     if config_prefix then
         local menu_order = string.format(
-            "%s/%s_menu_order.lua", DataStorage:getSettingsDir(), config_prefix)
+            "%s/%s_menu_order", DataStorage:getSettingsDir(), config_prefix)
 
-        if lfs.attributes(menu_order) then
-            return dofile(menu_order) or {}
+        if lfs.attributes(menu_order..".lua") then
+            return require(menu_order) or {}
         end
     end
     return {}
@@ -35,7 +33,7 @@ end
 function MenuSorter:mergeAndSort(config_prefix, item_table, order)
     local user_order = self:readMSSettings(config_prefix)
     if user_order then
-        for user_order_id, user_order_item in pairs(user_order) do
+        for user_order_id,user_order_item in pairs(user_order) do
             order[user_order_id] = user_order_item
         end
     end
@@ -50,15 +48,15 @@ function MenuSorter:sort(item_table, order)
     local menu_table = {}
     local sub_menus = {}
     -- the actual sorting of menu items
-    for order_id, order_item in pairs(order) do
+    for order_id, order_item in pairs (order) do
         -- user might define non-existing menu item
         if item_table[order_id] ~= nil then
             local tmp_menu_table = {}
             menu_table[order_id] = item_table[order_id]
             menu_table[order_id].id = order_id
-            for order_number, order_number_id in ipairs(order_item) do
+            for order_number,order_number_id in ipairs(order_item) do
                 -- this is a submenu, mark it for later
-                if item_table[order_number_id] ~= nil and order[order_number_id] then
+                if order[order_number_id] then
                     table.insert(sub_menus, order_number_id)
                     tmp_menu_table[order_number] = {
                         id = order_number_id,
@@ -116,7 +114,7 @@ function MenuSorter:sort(item_table, order)
     while changed do
         changed = false
         -- now do the submenus
-        for i, sub_menu in ipairs(sub_menus) do
+        for i,sub_menu in ipairs(sub_menus) do
             if menu_table[sub_menu] ~= nil then
                 local sub_menu_position = self:findById(menu_table["KOMenu:menu_buttons"], sub_menu)
                 if sub_menu_position then
@@ -137,7 +135,7 @@ function MenuSorter:sort(item_table, order)
     -- they should, however have one going in
     -- Also, compress the menu table.
     local menu_buttons_offset = 0
-    for i, top_menu in ipairs(menu_table["KOMenu:menu_buttons"]) do
+    for i,top_menu in ipairs(menu_table["KOMenu:menu_buttons"]) do
         local menu_button = menu_table["KOMenu:menu_buttons"][i].sub_item_table
         menu_table["KOMenu:menu_buttons"][i] = nil
         if menu_button then
@@ -148,7 +146,7 @@ function MenuSorter:sort(item_table, order)
     end
     -- handle disabled
     if order["KOMenu:disabled"] then
-        for _, item in ipairs(order["KOMenu:disabled"]) do
+        for _,item in ipairs(order["KOMenu:disabled"]) do
             if item_table[item] then
                 -- remove reference from input so it won't show up as orphaned
                 item_table[item] = nil
@@ -158,43 +156,23 @@ function MenuSorter:sort(item_table, order)
 
     -- remove top level reference before orphan handling
     item_table["KOMenu:menu_buttons"] = nil
-
-    -- attach orphans based on sorting_hint, or with a NEW prefix in the first menu if none found
-    for k, v in FFIUtil.orderedPairs(item_table) do
-        local sorting_hint = v.sorting_hint
-
+        --attach orphans based on menu_hint
+    for k,v in pairs(item_table) do
         -- normally there should be menu text but check to be sure
         if v.text and v.new ~= true then
             v.id = k
-            if not sorting_hint then v.text = self.orphaned_prefix .. v.text end
+            v.text = self.orphaned_prefix .. v.text
             -- prevent text being prepended to item on menu reload, i.e., on switching between reader and filemanager
             v.new = true
             -- deal with orphaned submenus
             if #v > 0 then
                 v.sub_item_table = {}
-                for i=1, #v do
+                for i=1,#v do
                     v.sub_item_table[i] = v[i]
                 end
             end
         end
-        if sorting_hint then
-            local sorting_hint_menu = self:findById(menu_table["KOMenu:menu_buttons"], sorting_hint)
-            Dbg.dassert(sorting_hint_menu, string.format(
-                "MenuSorter: item '%s' has sorting_hint '%s', but no menu with that id exists. "
-                .. "Either the hint is mistyped, or the target is conditionally built "
-                .. "(e.g., physical_buttons_setup requires Device:hasKeys()).",
-                tostring(k), tostring(sorting_hint)
-            ))
-            if sorting_hint_menu then
-                sorting_hint_menu = sorting_hint_menu.sub_item_table or sorting_hint_menu
-                table.insert(sorting_hint_menu, v)
-            else
-                -- The target menu may legitimately be absent (e.g., physical_buttons_setup without hasKeys).
-                logger.warn("menu hint target not found, skipping item:", k, sorting_hint)
-            end
-        else
-            table.insert(menu_table["KOMenu:menu_buttons"][1], v)
-        end
+        table.insert(menu_table["KOMenu:menu_buttons"][1], v)
     end
     return menu_table["KOMenu:menu_buttons"]
 end
@@ -206,7 +184,7 @@ end
 function MenuSorter:findById(tbl, needle_id)
     local items = {}
 
-    for _, item in pairs(tbl) do
+    for _,item in pairs(tbl) do
         if item ~= "KOMenu:menu_buttons" then
             table.insert(items, item)
         end
@@ -215,13 +193,10 @@ function MenuSorter:findById(tbl, needle_id)
     local k, v
     k, v = next(items, nil)
     while k do
-        local id_match = v.id == needle_id
-        local sub_table = v.sub_item_table or type(v) == "table" and v
-
-        if id_match then
+        if v.id == needle_id then
             return v
-        elseif sub_table then
-            for _, item in pairs(sub_table) do
+        elseif v.sub_item_table then
+            for _,item in pairs(v.sub_item_table) do
                 if type(item) == "table" and item.id then
                     table.insert(items, item)
                 end

@@ -1,12 +1,10 @@
 --[[--
-Events are messages that are passed through the widget tree.
+Events are messages that are passed through the widget tree
 
 Events need a "name" attribute as minimal data.
 
-To see how event propagation works and how to make
+In order to see how event propagation works and how to make
 widgets event-aware see the implementation in @{ui.widget.container.widgetcontainer}.
-
-A detailed guide to events can be found in @{Events.md|the event programmer's guide}.
 ]]
 
 --[[--
@@ -17,7 +15,7 @@ A detailed guide to events can be found in @{Events.md|the event programmer's gu
 local Event = {}
 
 --[[--
-Creates a new event.
+Create a new event.
 
 @string name
 @tparam[opt] ... arguments for the event
@@ -30,7 +28,7 @@ Event:new("GotoPage", 1)
 function Event:new(name, ...)
     local o = {
         handler = "on"..name,
-        args = table.pack(...),
+        args = {...}
     }
     setmetatable(o, self)
     self.__index = self

@@ -1,23 +1,27 @@
-PHONY = all android-ndk android-sdk base clean distclean doc fetchthirdparty re static-check update update-%
-SOUND = $(INSTALL_DIR)/%
-
 # koreader-base directory
-KOR_BASE ?= base
+KOR_BASE?=base
 
-include $(KOR_BASE)/Makefile.defs
+# the repository might not have been checked out yet, so make this
+# able to fail:
+-include $(KOR_BASE)/Makefile.defs
 
-DESCRIBE := $(shell ./tools/describe.sh)
-VERSION := $(word 1,$(DESCRIBE))
-RELEASE_DATE := $(word 2,$(DESCRIBE))
-RELEASE_EPOCH := $(word 3,$(DESCRIBE))
-ifeq (,$(and $(VERSION),$(RELEASE_DATE),$(RELEASE_EPOCH)))
-  $(error failed to determine version)
+# We want VERSION to carry the version of the KOReader main repo, not that of koreader-base
+VERSION:=$(shell git describe HEAD)
+# Only append date if we're not on a whole version, like v2018.11
+ifneq (,$(findstring -,$(VERSION)))
+	VERSION:=$(VERSION)_$(shell git describe HEAD | xargs git show -s --format=format:"%cd" --date=short)
 endif
 
-MACHINE=$(TARGET_MACHINE)
+# set PATH to find CC in managed toolchains
+ifeq ($(TARGET), android)
+	PATH:=$(ANDROID_TOOLCHAIN)/bin:$(PATH)
+else ifeq ($(TARGET), pocketbook)
+	PATH:=$(POCKETBOOK_TOOLCHAIN)/bin:$(PATH)
+endif
+
+MACHINE=$(shell PATH=$(PATH) $(CC) -dumpmachine 2>/dev/null)
 ifdef KODEBUG
 	MACHINE:=$(MACHINE)-debug
-	KODEDUG_SUFFIX:=-debug
 endif
 
 ifdef TARGET
@@ -26,189 +30,446 @@ else
 	DIST:=emulator
 endif
 
-INSTALL_DIR ?= koreader-$(DIST)-$(MACHINE)
+INSTALL_DIR=koreader-$(DIST)-$(MACHINE)
 
 # platform directories
 PLATFORM_DIR=platform
 COMMON_DIR=$(PLATFORM_DIR)/common
+ANDROID_DIR=$(PLATFORM_DIR)/android
+ANDROID_LAUNCHER_DIR:=$(ANDROID_DIR)/luajit-launcher
+APPIMAGE_DIR=$(PLATFORM_DIR)/appimage
+CERVANTES_DIR=$(PLATFORM_DIR)/cervantes
+KINDLE_DIR=$(PLATFORM_DIR)/kindle
+KOBO_DIR=$(PLATFORM_DIR)/kobo
+POCKETBOOK_DIR=$(PLATFORM_DIR)/pocketbook
+SONY_PRSTUX_DIR=$(PLATFORM_DIR)/sony-prstux
+UBUNTUTOUCH_DIR=$(PLATFORM_DIR)/ubuntu-touch
+UBUNTUTOUCH_SDL_DIR:=$(UBUNTUTOUCH_DIR)/ubuntu-touch-sdl
 WIN32_DIR=$(PLATFORM_DIR)/win32
 
-define CR3GUI_DATADIR_EXCLUDES
-%/KoboUSBMS.tar.gz
-%/NOTES.txt
-%/cr3.ini
-%/cr3skin-format.txt
-%/desktop
-%/devices
-%/dict
-%/manual
-%/tessdata
-endef
-CR3GUI_DATADIR_FILES = $(filter-out $(CR3GUI_DATADIR_EXCLUDES),$(wildcard $(CR3GUI_DATADIR)/*))
+# appimage setup
+APPIMAGETOOL=appimagetool-x86_64.AppImage
+APPIMAGETOOL_URL=https://github.com/AppImage/AppImageKit/releases/download/11/appimagetool-x86_64.AppImage
 
-define DATADIR_FILES
-$(CR3GUI_DATADIR_FILES)
-$(OUTPUT_DIR_DATAFILES)
-endef
+# set to 1 if in Docker
+DOCKER:=$(shell grep -q docker /proc/1/cgroup && echo 1)
 
 # files to link from main directory
 INSTALL_FILES=reader.lua setupkoenv.lua frontend resources defaults.lua datastorage.lua \
 		l10n tools README.md COPYING
 
-OUTPUT_DIR_ARTIFACTS = $(abspath $(OUTPUT_DIR))/!(cache|cmake|data|history|staging|thirdparty)
-OUTPUT_DIR_DATAFILES = $(OUTPUT_DIR)/data/*
-
-# Release excludes. {{{
-
-define UPDATE_PATH_EXCLUDES
-cache
-clipboard
-data/dict
-data/tessdata
-ev_replay.py
-help
-history
-l10n/templates
-l10n/*/*.po
-ota
-resources/fonts*
-resources/icons/src*
-screenshots
-spec
-endef
-
-# Files created after execution.
-define UPDATE_PATH_EXCLUDES +=
-data/cr3.ini
-defaults.*.lua
-history.lua
-scripts
-settings
-settings.reader.lua*
-styletweaks
-version.log
-endef
-
-# Testsuite leftovers.
-define UPDATE_PATH_EXCLUDES +=
-dummy-test-file*
-file.sdr*
-i18n-test
-readerbookmark.*
-readerhighlight.*
-testdata
-this-is-not-a-valid-file*
-endef
-
-# Globally excluded.
-define UPDATE_GLOBAL_EXCLUDES
-*.dbg
-*.dSYM
-*.orig
-*.swo
-*.swp
-*.un~
-.*
-endef
-
-release_excludes = $(strip $(UPDATE_PATH_EXCLUDES:%='-x!$1%') $(UPDATE_GLOBAL_EXCLUDES:%='-xr!%'))
-
-# }}}
-
-define mkupdate
-cd $(INSTALL_DIR) &&
-'$(abspath tools/mkrelease.sh)'
---epoch=$(RELEASE_EPOCH)
-$(if $(PARALLEL_JOBS),--jobs $(PARALLEL_JOBS))
---manifest=$(or $2,koreader)/ota/package.index
-$(foreach a,$1,'$(if $(filter --%,$a),$a,$(abspath $a))') $(or $2,koreader)
-$(call release_excludes,$(or $2,koreader)/)
-endef
-
-all: base mo
+all: $(if $(ANDROID),,$(KOR_BASE)/$(OUTPUT_DIR)/luajit)
+	$(MAKE) -C $(KOR_BASE)
 	install -d $(INSTALL_DIR)/koreader
-	rm -f $(INSTALL_DIR)/koreader/git-rev; echo "$(VERSION)_$(DIST)" > $(INSTALL_DIR)/koreader/git-rev
+	rm -f $(INSTALL_DIR)/koreader/git-rev; echo "$(VERSION)" > $(INSTALL_DIR)/koreader/git-rev
+ifneq ($(or $(EMULATE_READER),$(WIN32)),)
+	cp -f $(KOR_BASE)/ev_replay.py $(INSTALL_DIR)/koreader/
+	@echo "[*] create symlink instead of copying files in development mode"
+	cd $(INSTALL_DIR)/koreader && \
+		ln -sf ../../$(KOR_BASE)/$(OUTPUT_DIR)/* .
+	@echo "[*] install front spec only for the emulator"
+	cd $(INSTALL_DIR)/koreader/spec && test -e front || \
+		ln -sf ../../../../spec ./front
+	cd $(INSTALL_DIR)/koreader/spec/front/unit && test -e data || \
+		ln -sf ../../test ./data
+else
+	$(RCP) -fL $(KOR_BASE)/$(OUTPUT_DIR)/. $(INSTALL_DIR)/koreader/.
+endif
+	for f in $(INSTALL_FILES); do \
+		ln -sf ../../$$f $(INSTALL_DIR)/koreader/; \
+	done
 ifdef ANDROID
-	rm -f android-fdroid-version; echo -e "$(ANDROID_NAME)\n$(ANDROID_VERSION)" > koreader-android-fdroid-latest
+	cd $(INSTALL_DIR)/koreader && \
+		ln -sf ../../$(ANDROID_DIR)/*.lua .
 endif
-	$(SYMLINK) $(KOR_BASE)/ev_replay.py $(INSTALL_DIR)/koreader/
-	bash -O extglob -c '$(SYMLINK) $(OUTPUT_DIR_ARTIFACTS) $(INSTALL_DIR)/koreader/'
-ifneq (,$(EMULATE_READER))
-	@echo "[*] Install front spec only for the emulator"
-	$(SYMLINK) spec $(INSTALL_DIR)/koreader/spec/front
-	$(SYMLINK) test $(INSTALL_DIR)/koreader/spec/front/unit/data
-	@echo "[*] Install launcher for the emulator"
-	cp $(COMMON_DIR)/koreader.sh $(INSTALL_DIR)/koreader/
-endif
-	$(SYMLINK) $(INSTALL_FILES) $(INSTALL_DIR)/koreader/
-ifdef ANDROID
-	$(SYMLINK) $(ANDROID_DIR)/*.lua $(INSTALL_DIR)/koreader/
-endif
-	@echo "[*] Install update once marker"
-	@echo "# This file indicates that update once patches have not been applied yet." > $(INSTALL_DIR)/koreader/update_once.marker
 ifdef WIN32
 	@echo "[*] Install runtime libraries for win32..."
-	$(SYMLINK) $(WIN32_DIR)/*.dll $(INSTALL_DIR)/koreader/
+	cd $(INSTALL_DIR)/koreader && cp ../../$(WIN32_DIR)/*.dll .
 endif
 	@echo "[*] Install plugins"
-	$(SYMLINK) plugins $(INSTALL_DIR)/koreader/
-	@echo "[*] Install resources"
-	$(SYMLINK) resources/fonts $(INSTALL_DIR)/koreader/fonts
-	install -d $(INSTALL_DIR)/koreader/{screenshots,fonts/host,ota}
-	# Note: the data dir is distinct from the one in base/build/…!
-	@echo "[*] Install data files"
-	! test -L $(INSTALL_DIR)/koreader/data || rm $(INSTALL_DIR)/koreader/data
-	install -d $(INSTALL_DIR)/koreader/data
-	$(SYMLINK) $(strip $(DATADIR_FILES)) $(INSTALL_DIR)/koreader/data/
-
-base: base-all
-
-ifeq (,$(wildcard $(KOR_BASE)/Makefile $(KOR_BASE)/Makefile.defs))
-$(KOR_BASE)/Makefile $(KOR_BASE)/Makefile.defs: fetchthirdparty
-	# Need a recipe, even if empty, or make won't know how to remake `base-all`.
+	@# TODO: link istead of cp?
+	$(RCP) plugins/. $(INSTALL_DIR)/koreader/plugins/.
+	@# purge deleted plugins
+	for d in $$(ls $(INSTALL_DIR)/koreader/plugins); do \
+		test -d plugins/$$d || rm -rf $(INSTALL_DIR)/koreader/plugins/$$d ; done
+	@echo "[*] Installresources"
+	$(RCP) -pL resources/fonts/. $(INSTALL_DIR)/koreader/fonts/.
+	install -d $(INSTALL_DIR)/koreader/{screenshots,data/{dict,tessdata},fonts/host,ota}
+ifeq ($(or $(EMULATE_READER),$(WIN32)),)
+	@echo "[*] Clean up, remove unused files for releases"
+	rm -rf $(INSTALL_DIR)/koreader/data/{cr3.ini,cr3skin-format.txt,desktop,devices,manual}
 endif
+
+$(KOR_BASE)/$(OUTPUT_DIR)/luajit:
+	$(MAKE) -C $(KOR_BASE)
+
+$(INSTALL_DIR)/koreader/.busted: .busted
+	ln -sf ../../.busted $(INSTALL_DIR)/koreader
+
+$(INSTALL_DIR)/koreader/.luacov:
+	test -e $(INSTALL_DIR)/koreader/.luacov || \
+		ln -sf ../../.luacov $(INSTALL_DIR)/koreader
+
+testfront: $(INSTALL_DIR)/koreader/.busted
+	# sdr files may have unexpected impact on unit testing
+	-rm -rf spec/unit/data/*.sdr
+	cd $(INSTALL_DIR)/koreader && ./luajit $(shell which busted) \
+		--sort-files \
+		--no-auto-insulate \
+		--output=gtest \
+		--exclude-tags=notest $(BUSTED_OVERRIDES) $(BUSTED_SPEC_FILE)
+
+test: $(INSTALL_DIR)/koreader/.busted
+	$(MAKE) -C $(KOR_BASE) test
+	$(MAKE) testfront
+
+coverage: $(INSTALL_DIR)/koreader/.luacov
+	-rm -rf $(INSTALL_DIR)/koreader/luacov.*.out
+	cd $(INSTALL_DIR)/koreader && \
+		./luajit $(shell which busted) --output=gtest \
+			--sort-files \
+			--no-auto-insulate \
+			--coverage --exclude-tags=nocov
+	# coverage report summary
+	cd $(INSTALL_DIR)/koreader && tail -n \
+		+$$(($$(grep -nm1 -e "^Summary$$" luacov.report.out|cut -d: -f1)-1)) \
+		luacov.report.out
 
 fetchthirdparty:
-	git submodule sync --recursive
-ifneq (,$(CI))
-	git submodule update --depth 1 --jobs 3 --init --recursive
-else
-	# Force shallow clones of submodules configured as such.
-	git submodule update --jobs 3 --depth 1 --init $(shell \
-		git config --file=.gitmodules --name-only --get-regexp '^submodule\.[^.]+\.shallow$$' true \
-		| sed 's/\.shallow$$/.path/' \
-		| xargs -n1 git config --file=.gitmodules \
-		)
-	# Update the rest.
-	git submodule update --jobs 3 --init --recursive
+	git submodule init
+	git submodule sync
+	git submodule update
+	$(MAKE) -C $(KOR_BASE) fetchthirdparty
+
+VERBOSE ?= @
+Q = $(VERBOSE:1=)
+clean:
+	rm -rf $(INSTALL_DIR)
+	$(Q:@=@echo 'MAKE -C base clean'; &> /dev/null) \
+		$(MAKE) -C $(KOR_BASE) clean
+ifeq ($(TARGET), android)
+	$(MAKE) -C $(CURDIR)/platform/android/luajit-launcher clean
 endif
 
-clean: base-clean mo-clean
+dist-clean: clean
 	rm -rf $(INSTALL_DIR)
-
-distclean: clean base-distclean
+	$(MAKE) -C $(KOR_BASE) dist-clean
 	$(MAKE) -C doc clean
 
-re: clean
-	$(MAKE) all
+ZIP_EXCLUDE=-x "*.swp" -x "*.swo" -x "*.orig" -x "*.un~"
+# Don't bundle launchpad on touch devices..
+ifeq ($(TARGET), kindle-legacy)
+KINDLE_LEGACY_LAUNCHER:=launchpad
+endif
+kindleupdate: all
+	# ensure that the binaries were built for ARM
+	file $(INSTALL_DIR)/koreader/luajit | grep ARM || exit 1
+	# remove old package if any
+	rm -f koreader-$(DIST)-$(MACHINE)-$(VERSION).zip
+	# Kindle launching scripts
+	ln -sf ../$(KINDLE_DIR)/extensions $(INSTALL_DIR)/
+	ln -sf ../$(KINDLE_DIR)/launchpad $(INSTALL_DIR)/
+	ln -sf ../../$(KINDLE_DIR)/koreader.sh $(INSTALL_DIR)/koreader
+	ln -sf ../../$(KINDLE_DIR)/libkohelper.sh $(INSTALL_DIR)/koreader
+	ln -sf ../../$(COMMON_DIR)/spinning_zsync $(INSTALL_DIR)/koreader
+	# create new package
+	cd $(INSTALL_DIR) && pwd && \
+		zip -9 -r \
+			../koreader-$(DIST)-$(MACHINE)-$(VERSION).zip \
+			extensions koreader $(KINDLE_LEGACY_LAUNCHER) \
+			-x "koreader/resources/fonts/*" "koreader/ota/*" \
+			"koreader/resources/icons/src/*" "koreader/spec/*" \
+			$(ZIP_EXCLUDE)
+	# generate kindleupdate package index file
+	zipinfo -1 koreader-$(DIST)-$(MACHINE)-$(VERSION).zip > \
+		$(INSTALL_DIR)/koreader/ota/package.index
+	echo "koreader/ota/package.index" >> $(INSTALL_DIR)/koreader/ota/package.index
+	# update index file in zip package
+	cd $(INSTALL_DIR) && zip -u ../koreader-$(DIST)-$(MACHINE)-$(VERSION).zip \
+		koreader/ota/package.index
+	# make gzip kindleupdate for zsync OTA update
+	# note that the targz file extension is intended to keep ISP from caching
+	# the file, see koreader#1644.
+	cd $(INSTALL_DIR) && \
+		tar -I"gzip --rsyncable" -cah --no-recursion -f ../koreader-$(DIST)-$(MACHINE)-$(VERSION).targz \
+		-T koreader/ota/package.index
 
-# Include emulator specific rules.
-ifneq (,$(EMULATE_READER))
-  include make/emulator.mk
+koboupdate: all
+	# ensure that the binaries were built for ARM
+	file $(INSTALL_DIR)/koreader/luajit | grep ARM || exit 1
+	# remove old package if any
+	rm -f koreader-kobo-$(MACHINE)-$(VERSION).zip
+	# Kobo launching scripts
+	cp $(KOBO_DIR)/koreader.png $(INSTALL_DIR)/koreader.png
+	cp $(KOBO_DIR)/fmon/README.txt $(INSTALL_DIR)/README_kobo.txt
+	cp $(KOBO_DIR)/*.sh $(INSTALL_DIR)/koreader
+	cp $(COMMON_DIR)/spinning_zsync $(INSTALL_DIR)/koreader
+	# create new package
+	cd $(INSTALL_DIR) && \
+		zip -9 -r \
+			../koreader-kobo-$(MACHINE)-$(VERSION).zip \
+			koreader -x "koreader/resources/fonts/*" \
+			"koreader/resources/icons/src/*" "koreader/spec/*" \
+			$(ZIP_EXCLUDE)
+	# generate koboupdate package index file
+	zipinfo -1 koreader-kobo-$(MACHINE)-$(VERSION).zip > \
+		$(INSTALL_DIR)/koreader/ota/package.index
+	echo "koreader/ota/package.index" >> $(INSTALL_DIR)/koreader/ota/package.index
+	# update index file in zip package
+	cd $(INSTALL_DIR) && zip -u ../koreader-kobo-$(MACHINE)-$(VERSION).zip \
+		koreader/ota/package.index koreader.png README_kobo.txt
+	# make gzip koboupdate for zsync OTA update
+	cd $(INSTALL_DIR) && \
+		tar -I"gzip --rsyncable" -cah --no-recursion -f ../koreader-kobo-$(MACHINE)-$(VERSION).targz \
+		-T koreader/ota/package.index
+
+pbupdate: all
+	# ensure that the binaries were built for ARM
+	file $(INSTALL_DIR)/koreader/luajit | grep ARM || exit 1
+	# remove old package if any
+	rm -f koreader-pocketbook-$(MACHINE)-$(VERSION).zip
+	# Pocketbook launching script
+	mkdir -p $(INSTALL_DIR)/applications
+	mkdir -p $(INSTALL_DIR)/system/bin
+	mkdir -p $(INSTALL_DIR)/system/config
+
+	cp $(POCKETBOOK_DIR)/koreader.app $(INSTALL_DIR)/applications
+	cp $(POCKETBOOK_DIR)/koreader.app $(INSTALL_DIR)/system/bin
+	cp $(POCKETBOOK_DIR)/extensions.cfg $(INSTALL_DIR)/system/config
+	cp -rfL $(INSTALL_DIR)/koreader $(INSTALL_DIR)/applications
+	# create new package
+	cd $(INSTALL_DIR) && \
+		zip -9 -r \
+			../koreader-pocketbook-$(MACHINE)-$(VERSION).zip \
+			applications -x "applications/koreader/resources/fonts/*" \
+			"applications/koreader/resources/icons/src/*" "applications/koreader/spec/*" \
+			$(ZIP_EXCLUDE)
+	# generate koboupdate package index file
+	zipinfo -1 koreader-pocketbook-$(MACHINE)-$(VERSION).zip > \
+		$(INSTALL_DIR)/applications/koreader/ota/package.index
+	echo "applications/koreader/ota/package.index" >> \
+		$(INSTALL_DIR)/applications/koreader/ota/package.index
+	# hack file path when running tar in parent directory of koreader
+	sed -i -e 's/^/..\//' \
+		$(INSTALL_DIR)/applications/koreader/ota/package.index
+	# update index file in zip package
+	cd $(INSTALL_DIR) && zip -ru ../koreader-pocketbook-$(MACHINE)-$(VERSION).zip \
+		applications/koreader/ota/package.index system
+	# make gzip pbupdate for zsync OTA update
+	cd $(INSTALL_DIR)/applications && \
+		tar -I"gzip --rsyncable" -cah --no-recursion -f ../../koreader-pocketbook-$(MACHINE)-$(VERSION).targz \
+		-T koreader/ota/package.index
+
+utupdate: all
+	# ensure that the binaries were built for ARM
+	file $(INSTALL_DIR)/koreader/luajit | grep ARM || exit 1
+	# remove old package if any
+	rm -f koreader-ubuntu-touch-$(MACHINE)-$(VERSION).click
+
+	ln -sf ../../$(UBUNTUTOUCH_DIR)/koreader.sh $(INSTALL_DIR)/koreader
+	ln -sf ../../$(UBUNTUTOUCH_DIR)/manifest.json $(INSTALL_DIR)/koreader
+	ln -sf ../../$(UBUNTUTOUCH_DIR)/koreader.apparmor $(INSTALL_DIR)/koreader
+	ln -sf ../../$(UBUNTUTOUCH_DIR)/koreader.apparmor.openstore $(INSTALL_DIR)/koreader
+	ln -sf ../../$(UBUNTUTOUCH_DIR)/koreader.desktop $(INSTALL_DIR)/koreader
+	ln -sf ../../$(UBUNTUTOUCH_DIR)/koreader.png $(INSTALL_DIR)/koreader
+	ln -sf ../../$(UBUNTUTOUCH_DIR)/libSDL2.so $(INSTALL_DIR)/koreader/libs
+
+	# create new package
+	cd $(INSTALL_DIR) && pwd && \
+		zip -9 -r \
+			../koreader-$(DIST)-$(MACHINE)-$(VERSION).zip \
+			koreader -x "koreader/resources/fonts/*" "koreader/ota/*" \
+			"koreader/resources/icons/src/*" "koreader/spec/*" \
+			$(ZIP_EXCLUDE)
+
+	# generate update package index file
+	zipinfo -1 koreader-$(DIST)-$(MACHINE)-$(VERSION).zip > \
+		$(INSTALL_DIR)/koreader/ota/package.index
+	echo "koreader/ota/package.index" >> $(INSTALL_DIR)/koreader/ota/package.index
+	# update index file in zip package
+	cd $(INSTALL_DIR) && zip -u ../koreader-$(DIST)-$(MACHINE)-$(VERSION).zip \
+		koreader/ota/package.index
+	# make gzip update for zsync OTA update
+	cd $(INSTALL_DIR) && \
+		tar -czah --no-recursion -f ../koreader-$(DIST)-$(MACHINE)-$(VERSION).targz \
+		-T koreader/ota/package.index
+
+	# generate ubuntu touch click package
+	rm -rf $(INSTALL_DIR)/tmp && mkdir -p $(INSTALL_DIR)/tmp
+	cd $(INSTALL_DIR)/tmp && \
+		unzip ../../koreader-$(DIST)-$(MACHINE)-$(VERSION).zip && \
+		click build koreader && \
+		mv *.click ../../koreader-$(DIST)-$(MACHINE)-$(VERSION).click
+
+appimageupdate: all
+	# remove old package if any
+	rm -f koreader-appimage-$(MACHINE)-$(VERSION).appimage
+
+	ln -sf ../../$(APPIMAGE_DIR)/AppRun $(INSTALL_DIR)/koreader
+	ln -sf ../../$(APPIMAGE_DIR)/koreader.appdata.xml $(INSTALL_DIR)/koreader
+	ln -sf ../../$(APPIMAGE_DIR)/koreader.desktop $(INSTALL_DIR)/koreader
+	ln -sf ../../resources/koreader.png $(INSTALL_DIR)/koreader
+	# TODO at best this is DebUbuntu specific
+	ln -sf /usr/lib/x86_64-linux-gnu/libSDL2-2.0.so.0 $(INSTALL_DIR)/koreader/libs/libSDL2.so
+ifeq ("$(wildcard $(APPIMAGETOOL))","")
+	# download appimagetool
+	wget "$(APPIMAGETOOL_URL)"
+	chmod a+x "$(APPIMAGETOOL)"
+endif
+ifeq ($(DOCKER), 1)
+	# remove previously extracted appimagetool, if any
+	rm -rf squashfs-root
+	./$(APPIMAGETOOL) --appimage-extract
+endif
+	cd $(INSTALL_DIR) && pwd && \
+		rm -rf tmp && mkdir -p tmp && \
+		cp -Lr koreader tmp && \
+		rm -rf tmp/koreader/ota && \
+		rm -rf tmp/koreader/resources/icons/src && \
+		rm -rf tmp/koreader/spec
+
+	# generate AppImage
+	cd $(INSTALL_DIR)/tmp && \
+		ARCH=x86_64 ../../$(if $(DOCKER),squashfs-root/AppRun,$(APPIMAGETOOL)) koreader && \
+		mv *.AppImage ../../koreader-$(DIST)-$(MACHINE)-$(VERSION).AppImage
+
+androidupdate: all
+	mkdir -p $(ANDROID_LAUNCHER_DIR)/assets/module
+	-rm $(ANDROID_LAUNCHER_DIR)/assets/module/koreader-*
+	# in runtime luajit-launcher's libluajit.so will be loaded
+	-rm $(INSTALL_DIR)/koreader/libs/libluajit.so
+	# create zip package
+	cd $(INSTALL_DIR)/koreader && \
+		zip -9 -r \
+			../../koreader-android-$(MACHINE)-$(VERSION).zip \
+			* -x "resources/fonts/*" "resources/icons/src/*" "spec/*" \
+			$(ZIP_EXCLUDE)
+	# generate android update package index file
+	zipinfo -1 koreader-android-$(MACHINE)-$(VERSION).zip > \
+		$(INSTALL_DIR)/koreader/ota/package.index
+	rm -f koreader-android-$(MACHINE)-$(VERSION).zip
+	echo "ota/package.index" >> $(INSTALL_DIR)/koreader/ota/package.index
+	cp $(INSTALL_DIR)/koreader/git-rev $(INSTALL_DIR)/koreader/ota-rev
+	# don't update the git-rev so that the next start won't revert back
+	# the older 7z version in the assets
+	$(ISED) '/git-rev/d' $(INSTALL_DIR)/koreader/ota/package.index
+	# make gzip android update for zsync OTA update
+	-cd $(INSTALL_DIR)/koreader && \
+		tar -czah --no-recursion -f ../../koreader-android-$(MACHINE)-$(VERSION).targz \
+		-T ota/package.index
+	# make android update apk
+	cd $(INSTALL_DIR)/koreader && 7z a -l -mx=1 \
+		../../$(ANDROID_LAUNCHER_DIR)/assets/module/koreader-$(VERSION).7z * \
+		-x!resources/fonts -x!resources/icons/src -x!spec
+	$(MAKE) -C $(ANDROID_LAUNCHER_DIR) apk
+	cp $(ANDROID_LAUNCHER_DIR)/bin/NativeActivity-debug.apk \
+		koreader-android-$(MACHINE)-$(VERSION).apk
+
+sony-prstuxupdate: all
+	# ensure that the binaries were built for ARM
+	file $(INSTALL_DIR)/koreader/luajit | grep ARM || exit 1
+	# remove old package if any	
+	rm -f koreader-sony-prstux-$(MACHINE)-$(VERSION).zip
+	# Sony PRSTUX launching scripts
+	cp $(SONY_PRSTUX_DIR)/*.sh $(INSTALL_DIR)/koreader
+	# create new package
+	cd $(INSTALL_DIR) && \
+	        zip -9 -r \
+	                ../koreader-sony-prstux-$(MACHINE)-$(VERSION).zip \
+	                koreader -x "koreader/resources/fonts/*" \
+	                "koreader/resources/icons/src/*" "koreader/spec/*" \
+	                $(ZIP_EXCLUDE)
+	# generate update package index file
+	zipinfo -1 koreader-sony-prstux-$(MACHINE)-$(VERSION).zip > \
+	        $(INSTALL_DIR)/koreader/ota/package.index
+	echo "koreader/ota/package.index" >> $(INSTALL_DIR)/koreader/ota/package.index
+	# update index file in zip package
+	cd $(INSTALL_DIR) && zip -u ../koreader-sony-prstux-$(MACHINE)-$(VERSION).zip \
+	        koreader/ota/package.index
+	# make gzip sonyprstux update for zsync OTA update
+	cd $(INSTALL_DIR) && \
+	        tar -I"gzip --rsyncable" -cah --no-recursion -f ../koreader-sony-prstux-$(MACHINE)-$(VERSION).targz \
+	        -T koreader/ota/package.index
+
+cervantesupdate: all
+	# ensure that the binaries were built for ARM
+	file $(INSTALL_DIR)/koreader/luajit | grep ARM || exit 1
+	# remove old package if any
+	rm -f koreader-cervantes-$(MACHINE)-$(VERSION).zip
+	# Cervantes launching scripts
+	cp $(CERVANTES_DIR)/*.sh $(INSTALL_DIR)/koreader
+	# create new package
+	cd $(INSTALL_DIR) && \
+		zip -9 -r \
+			../koreader-cervantes-$(MACHINE)-$(VERSION).zip \
+			koreader -x "koreader/resources/fonts/*" \
+			"koreader/resources/icons/src/*" "koreader/spec/*" \
+			$(ZIP_EXCLUDE)
+	# generate update package index file
+	zipinfo -1 koreader-cervantes-$(MACHINE)-$(VERSION).zip > \
+		$(INSTALL_DIR)/koreader/ota/package.index
+	echo "koreader/ota/package.index" >> $(INSTALL_DIR)/koreader/ota/package.index
+	# update index file in zip package
+	cd $(INSTALL_DIR) && zip -u ../koreader-cervantes-$(MACHINE)-$(VERSION).zip \
+	koreader/ota/package.index
+	# make gzip cervantes update for zsync OTA update
+	cd $(INSTALL_DIR) && \
+	tar -I"gzip --rsyncable" -cah --no-recursion -f ../koreader-cervantes-$(MACHINE)-$(VERSION).targz \
+	-T koreader/ota/package.index
+
+update:
+ifeq ($(TARGET), android)
+	make androidupdate
+else ifeq ($(TARGET), appimage)
+	make appimageupdate
+else ifeq ($(TARGET), cervantes)
+	make cervantesupdate
+else ifeq ($(TARGET), kindle)
+	make kindleupdate
+else ifeq ($(TARGET), kindle-legacy)
+	make kindleupdate
+else ifeq ($(TARGET), kindlepw2)
+	make kindleupdate
+else ifeq ($(TARGET), kobo)
+	make koboupdate
+else ifeq ($(TARGET), pocketbook)
+	make pbupdate
+else ifeq ($(TARGET), sony-prstux)
+	make sony-prstuxupdate
+else ifeq ($(TARGET), ubuntu-touch)
+	make utupdate
 endif
 
-# Include target specific rules.
-ifneq (,$(wildcard make/$(TARGET).mk))
-  include make/$(TARGET).mk
-endif
+androiddev: androidupdate
+	$(MAKE) -C $(ANDROID_LAUNCHER_DIR) dev
 
-include make/gettext.mk
+android-toolchain:
+	$(MAKE) -C $(KOR_BASE) android-toolchain
 
-android-ndk:
-	$(MAKE) -C $(KOR_BASE)/toolchain $(ANDROID_NDK_HOME)
+pocketbook-toolchain:
+	$(MAKE) -C $(KOR_BASE) pocketbook-toolchain
 
-android-sdk:
-	$(MAKE) -C $(KOR_BASE)/toolchain $(ANDROID_HOME)
+
+# for gettext
+DOMAIN=koreader
+TEMPLATE_DIR=l10n/templates
+KOREADER_MISC_TOOL=../koreader-misc
+XGETTEXT_BIN=$(KOREADER_MISC_TOOL)/gettext/lua_xgettext.py
+
+pot:
+	mkdir -p $(TEMPLATE_DIR)
+	$(XGETTEXT_BIN) reader.lua `find frontend -iname "*.lua"` \
+		`find plugins -iname "*.lua"` \
+		`find tools -iname "*.lua"` \
+		> $(TEMPLATE_DIR)/$(DOMAIN).pot
+	# push source file to Transifex
+	$(MAKE) -i -C l10n bootstrap
+	$(MAKE) -C l10n push
+
+po:
+	$(MAKE) -i -C l10n bootstrap
+	$(MAKE) -C l10n pull
+
 
 static-check:
 	@if which luacheck > /dev/null; then \
@@ -221,9 +482,4 @@ static-check:
 doc:
 	make -C doc
 
-.NOTPARALLEL:
-.PHONY: $(PHONY)
-
-include $(KOR_BASE)/Makefile
-
-# vim: foldmethod=marker foldlevel=0
+.PHONY: test doc

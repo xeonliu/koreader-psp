@@ -2,15 +2,15 @@
 Text rendering module.
 ]]
 
-local bit = require("bit")
 local Font = require("ui/font")
 local Cache = require("cache")
-local Blitbuffer = require("ffi/blitbuffer")
+local CacheItem = require("cacheitem")
+local BlitBuffer = require("ffi/blitbuffer")
 local logger = require("logger")
 
-local band = bit.band
-local bor = bit.bor
-local lshift = bit.lshift
+if require("device"):isAndroid() then
+    require("jit").off(true, true)
+end
 
 --[[
 @TODO: all these functions should probably be methods on Face objects
@@ -18,10 +18,11 @@ local lshift = bit.lshift
 local RenderText = {}
 
 local GlyphCache = Cache:new{
-    -- 1024 slots
-    slots = 1024,
-    -- Rely on our FFI finalizer to free the BBs on GC
-    enable_eviction_cb = false,
+    max_memsize = 512*1024,
+    current_memsize = 0,
+    cache = {},
+    -- this will hold the LRU order of the cache
+    cache_order = {}
 }
 
 -- iterator over UTF8 encoded characters in a string
@@ -29,23 +30,23 @@ local function utf8Chars(input_text)
     local function read_next_glyph(input, pos)
         if string.len(input) < pos then return nil end
         local value = string.byte(input, pos)
-        if band(value, 0x80) == 0 then
-            --- @todo check valid ranges
+        if bit.band(value, 0x80) == 0 then
+            -- TODO: check valid ranges
             return pos+1, value, string.sub(input, pos, pos)
-        elseif band(value, 0xC0) == 0x80 -- invalid, continuation
-        or band(value, 0xF8) == 0xF8 -- 5-or-more byte sequence, illegal due to RFC3629
+        elseif bit.band(value, 0xC0) == 0x80 -- invalid, continuation
+        or bit.band(value, 0xF8) == 0xF8 -- 5-or-more byte sequence, illegal due to RFC3629
         then
             return pos+1, 0xFFFD, "\xFF\xFD"
         else
             local glyph, bytes_left
-            if band(value, 0xE0) == 0xC0 then
-                glyph = band(value, 0x1F)
+            if bit.band(value, 0xE0) == 0xC0 then
+                glyph = bit.band(value, 0x1F)
                 bytes_left = 1
-            elseif band(value, 0xF0) == 0xE0 then
-                glyph = band(value, 0x0F)
+            elseif bit.band(value, 0xF0) == 0xE0 then
+                glyph = bit.band(value, 0x0F)
                 bytes_left = 2
-            elseif band(value, 0xF8) == 0xF0 then
-                glyph = band(value, 0x07)
+            elseif bit.band(value, 0xF8) == 0xF0 then
+                glyph = bit.band(value, 0x07)
                 bytes_left = 3
             else
                 return pos+1, 0xFFFD, "\xFF\xFD"
@@ -55,15 +56,15 @@ local function utf8Chars(input_text)
             end
             for i = pos+1, pos + bytes_left do
                 value = string.byte(input, i)
-                if band(value, 0xC0) == 0x80 then
-                    glyph = bor(lshift(glyph, 6), band(value, 0x3F))
+                if bit.band(value, 0xC0) == 0x80 then
+                    glyph = bit.bor(bit.lshift(glyph, 6), bit.band(value, 0x3F))
                 else
                     -- invalid UTF8 continuation - don't be greedy, just skip
                     -- the initial char of the sequence.
                     return pos+1, 0xFFFD, "\xFF\xFD"
                 end
             end
-            --- @todo check for valid ranges here!
+            -- TODO: check for valid ranges here!
             return pos+bytes_left+1, glyph, string.sub(input, pos, pos+bytes_left)
         end
     end
@@ -77,26 +78,21 @@ end
 -- @bool[opt=false] bold whether the text should be measured as bold
 -- @treturn glyph
 function RenderText:getGlyph(face, charcode, bold)
-    local orig_bold = bold
-    if face.is_real_bold then
-        bold = false -- don't embolden glyphs already bold
-    end
-    -- nil is falsy, cache it as such (i.e., we don't want to use tostring here, as that would make it tristate: true/false/nil)
-    local hash = "glyph|"..face.hash.."|"..charcode.."|"..(bold and "1" or "0")
+    local hash = "glyph|"..face.hash.."|"..charcode.."|"..(bold and 1 or 0)
     local glyph = GlyphCache:check(hash)
     if glyph then
         -- cache hit
-        return glyph
+        return glyph[1]
     end
-    local rendered_glyph = face.ftsize:renderGlyph(charcode, bold)
-    if not face.ftsize:hasGlyph(charcode) then
+    local rendered_glyph = face.ftface:renderGlyph(charcode, bold)
+    if face.ftface:checkGlyph(charcode) == 0 then
         for index, font in pairs(Font.fallbacks) do
             -- use original size before scaling by screen DPI
             local fb_face = Font:getFace(font, face.orig_size)
             if fb_face ~= nil then
             -- for some characters it cannot find in Fallbacks, it will crash here
-                if fb_face.ftsize:hasGlyph(charcode) then
-                    rendered_glyph = fb_face.ftsize:renderGlyph(charcode, orig_bold)
+                if fb_face.ftface:checkGlyph(charcode) ~= 0 then
+                    rendered_glyph = fb_face.ftface:renderGlyph(charcode, bold)
                     break
                 end
             end
@@ -106,7 +102,9 @@ function RenderText:getGlyph(face, charcode, bold)
         logger.warn("error rendering glyph (charcode=", charcode, ") for face", face)
         return
     end
-    GlyphCache:insert(hash, rendered_glyph)
+    glyph = CacheItem:new{rendered_glyph}
+    glyph.size = glyph[1].bb:getWidth() * glyph[1].bb:getHeight() / 2 + 32
+    GlyphCache:insert(hash, glyph)
     return rendered_glyph
 end
 
@@ -128,7 +126,7 @@ function RenderText:getSubTextByWidth(text, face, width, kerning, bold)
         if pen_x < width then
             local glyph = self:getGlyph(face, charcode, bold)
             if kerning and prevcharcode then
-                local kern = face.ftsize:getKerning(prevcharcode, charcode)
+                local kern = face.ftface:getKerning(prevcharcode, charcode)
                 pen_x = pen_x + kern
             end
             pen_x = pen_x + glyph.ax
@@ -157,8 +155,8 @@ end
 -- @treturn RenderTextSize
 function RenderText:sizeUtf8Text(x, width, face, text, kerning, bold)
     if not text then
-        logger.warn("sizeUtf8Text called without text")
-        return { x = 0, y_top = 0, y_bottom = 0 }
+        logger.warn("sizeUtf8Text called without text");
+        return
     end
 
     -- may still need more adaptive pen placement when kerning,
@@ -168,10 +166,10 @@ function RenderText:sizeUtf8Text(x, width, face, text, kerning, bold)
     local pen_y_bottom = 0
     local prevcharcode = 0
     for _, charcode, uchar in utf8Chars(text) do
-        if not width or pen_x < (width - x) then
+        if pen_x < (width - x) then
             local glyph = self:getGlyph(face, charcode, bold)
             if kerning and (prevcharcode ~= 0) then
-                pen_x = pen_x + (face.ftsize):getKerning(prevcharcode, charcode)
+                pen_x = pen_x + (face.ftface):getKerning(prevcharcode, charcode)
             end
             pen_x = pen_x + glyph.ax
             pen_y_top = math.max(pen_y_top, glyph.t)
@@ -199,18 +197,18 @@ end
 -- @string text text to render
 -- @bool[opt=false] kerning whether the text should be measured with kerning
 -- @bool[opt=false] bold whether the text should be measured as bold
--- @tparam[opt=Blitbuffer.COLOR_BLACK] Blitbuffer.COLOR fgcolor foreground color
+-- @tparam[opt=BlitBuffer.COLOR_BLACK] BlitBuffer.COLOR fgcolor foreground color
 -- @int[opt=nil] width maximum rendering width
 -- @tparam[opt] table char_pads array of integers, nb of pixels to add, one for each utf8 char in text
 -- @return int width of rendered bitmap
 function RenderText:renderUtf8Text(dest_bb, x, baseline, face, text, kerning, bold, fgcolor, width, char_pads)
     if not text then
-        logger.warn("renderUtf8Text called without text")
+        logger.warn("renderUtf8Text called without text");
         return 0
     end
 
     if not fgcolor then
-        fgcolor = Blitbuffer.COLOR_BLACK
+        fgcolor = BlitBuffer.COLOR_BLACK
     end
 
     -- may still need more adaptive pen placement when kerning,
@@ -226,7 +224,7 @@ function RenderText:renderUtf8Text(dest_bb, x, baseline, face, text, kerning, bo
         if pen_x < text_width then
             local glyph = self:getGlyph(face, charcode, bold)
             if kerning and (prevcharcode ~= 0) then
-                pen_x = pen_x + face.ftsize:getKerning(prevcharcode, charcode)
+                pen_x = pen_x + face.ftface:getKerning(prevcharcode, charcode)
             end
             dest_bb:colorblitFrom(
                 glyph.bb,
@@ -243,7 +241,7 @@ function RenderText:renderUtf8Text(dest_bb, x, baseline, face, text, kerning, bo
             pen_x = pen_x + (char_pads[char_idx] or 0)
             -- We used to use:
             --   pen_x = pen_x + char_pads[char_idx]
-            --   above will fail if we didn't count the same number of chars, we'll see
+            --   above will fail if we didnt count the same number of chars, we'll see
             -- We saw, and it's pretty robust: it never failed before we tried to
             -- render some binary content, which messes the utf8 sequencing: the
             -- split to UTF8 is only reversible if text is valid UTF8 (or nearly UTF8).
@@ -259,12 +257,8 @@ function RenderText:renderUtf8Text(dest_bb, x, baseline, face, text, kerning, bo
     return pen_x
 end
 
-local ellipsis = "…"
-
-function RenderText:getEllipsisWidth(face, bold)
-    return self:sizeUtf8Text(0, false, face, ellipsis, false, bold).x
-end
-
+local ellipsis, space = "…", " "
+local ellipsis_width, space_width
 --- Returns a substring of a given text that meets the maximum width (in pixels)
 -- restriction with ellipses (…) at the end if required.
 --
@@ -273,49 +267,23 @@ end
 -- @int width maximum width in pixels
 -- @bool[opt=false] kerning whether the text should be measured with kerning
 -- @bool[opt=false] bold whether the text should be measured as bold
+-- @bool[opt=false] prepend_space whether a space should be prepended to the text
 -- @treturn string
 -- @see getSubTextByWidth
-function RenderText:truncateTextByWidth(text, face, max_width, kerning, bold)
-    local ellipsis_width = self:getEllipsisWidth(face, bold)
-    local new_txt_width = max_width - ellipsis_width
+function RenderText:truncateTextByWidth(text, face, max_width, kerning, bold, prepend_space)
+    if not ellipsis_width then
+        ellipsis_width = self:sizeUtf8Text(0, max_width, face, ellipsis).x
+    end
+    if not space_width then
+        space_width = self:sizeUtf8Text(0, max_width, face, space).x
+    end
+    local new_txt_width = max_width - ellipsis_width - space_width
     local sub_txt = self:getSubTextByWidth(text, face, new_txt_width, kerning, bold)
-    return sub_txt .. ellipsis
-end
-
---- Returns a rendered glyph by glyph index
--- xtext/Harfbuzz, after shaping, gives glyph indexes in the font, which
--- is usually different from the unicode codepoint of the original char)
---
--- @tparam ui.font.FontFaceObj face font face for the text
--- @int glyph index
--- @bool[opt=false] bold whether the glyph should be artificially boldened
--- @bool[opt=false] bolder whether the glyph should be *even more* artificially boldened (*can* stack with bold, but can also be used solo)
--- @treturn glyph
-function RenderText:getGlyphByIndex(face, glyphindex, bold, bolder)
-    if face.is_real_bold then
-        bold = false -- don't embolden glyphs already bold
+    if prepend_space then
+        return space.. sub_txt .. ellipsis
+    else
+        return sub_txt .. ellipsis .. space
     end
-    local hash = "xglyph|"..face.hash.."|"..glyphindex.."|"..(bold and "1" or "0")..(bolder and "x" or "")
-    local glyph = GlyphCache:check(hash)
-    if glyph then
-        -- cache hit
-        return glyph
-    end
-    local embolden_strength
-    if bold or bolder then
-        embolden_strength = face.embolden_half_strength
-        if bolder then
-            -- Even if not bold, get it bolder than the strength we'd use for bold
-            embolden_strength = embolden_strength * 1.5
-        end
-    end
-    local rendered_glyph = face.ftsize:renderGlyphByIndex(glyphindex, embolden_strength)
-    if not rendered_glyph then
-        logger.warn("error rendering glyph (glyphindex=", glyphindex, ") for face", face)
-        return
-    end
-    GlyphCache:insert(hash, rendered_glyph)
-    return rendered_glyph
 end
 
 return RenderText

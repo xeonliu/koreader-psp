@@ -15,15 +15,18 @@ function HookContainer:new(o)
 end
 
 function HookContainer:_assertIsValidName(name)
+    assert(self ~= nil)
     assert(type(name) == "string")
     assert(string.len(name) > 0)
 end
 
 function HookContainer:_assertIsValidFunction(func)
+    assert(self ~= nil)
     assert(type(func) == "function" or type(func) == "table")
 end
 
 function HookContainer:_assertIsValidFunctionOrNil(func)
+    assert(self ~= nil)
     if func == nil then return end
     self:_assertIsValidFunction(func)
 end
@@ -46,18 +49,16 @@ end
 function HookContainer:registerWidget(name, widget)
     self:_assertIsValidName(name)
     assert(type(widget) == "table")
-    -- *That* is the function we actually register and need to unregister later, so keep a ref to it...
-    local hook_func = function(args)
+    self:register(name, function(args)
         local f = widget["on" .. name]
         self:_assertIsValidFunction(f)
         f(widget, args)
-    end
-    self:register(name, hook_func)
+    end)
     local original_close_widget = widget.onCloseWidget
     self:_assertIsValidFunctionOrNil(original_close_widget)
     widget.onCloseWidget = function()
         if original_close_widget then original_close_widget(widget) end
-        self:unregister(name, hook_func)
+        self:unregister(name, widget["on" .. name])
     end
 end
 

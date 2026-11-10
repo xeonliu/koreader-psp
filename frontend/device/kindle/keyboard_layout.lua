@@ -9,6 +9,6 @@ return {
         "Z", "X", "C", "V", "B", "N", "M", ".", "Sym", "Enter",
     },
     [4] = {
-        "Shift", "Alt", "space", "Aa", "Home", "Back",
+        "Sym", "Alt", "space", "Aa", "Home", "Back",
     },
 }

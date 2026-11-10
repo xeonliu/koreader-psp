@@ -1,20 +1,14 @@
 --[[--
 Image rendering module.
-
-All the render* functions should return a BlitBuffer object on success, nil otherwise.
 ]]
 
-local Blitbuffer = require("ffi/blitbuffer")
-local Math = require("optmath")
 local ffi = require("ffi")
-local logger = require("logger")
 local Device = require("device")
+local logger = require("logger")
 
--- Backends are lazy-loaded
+-- Will be loaded when needed
 local Mupdf = nil
 local Pic = nil
-local NnSVG = nil
-local WebP = nil
 
 local RenderImage = {}
 
@@ -28,7 +22,7 @@ local RenderImage = {}
 function RenderImage:renderImageFile(filename, want_frames, width, height)
     local file = io.open(filename, "rb")
     if not file then
-        logger.warn("could not open image file:", filename)
+        logger.info("could not open image file:", filename)
         return
     end
     local data = file:read("*a")
@@ -49,68 +43,19 @@ function RenderImage:renderImageData(data, size, want_frames, width, height)
     if not data or not size or size == 0 then
         return
     end
-    -- Guess if it is a GIF or a WebP image: the dedicated methods are able to handle
-    -- animated GIF or WebP images, which MuPDF don't handle.
+    -- Guess if it is a GIF
     local buffer = ffi.cast("unsigned char*", data)
     local header = ffi.string(buffer, math.min(4, size))
-    local image
     if header == "GIF8" then
         logger.dbg("GIF file provided, renderImageData: using GifLib")
-        image = self:renderGifImageDataWithGifLib(data, size, want_frames, width, height)
+        local image = self:renderGifImageDataWithGifLib(data, size, want_frames, width, height)
+        if image then
+            return image
+        end
         -- fallback to rendering with MuPDF
-    elseif header == "RIFF" then
-        -- (The header should be "RIFFxxxxWEBPVP8", but we let libwebp check for what's after "RIFF".)
-        logger.dbg("possible WebP file provided, renderImageData: using libwebp")
-        image = self:renderWebpImageDataWithLibwebp(data, size, want_frames, width, height)
-    elseif header == "<svg" or header == "<?xm" then
-        logger.dbg("possible SVG file provided, renderImageData: using crengine")
-        image = self:renderSVGImageDataWithCRengine(data, size, width, height)
-    elseif buffer[0] == 0xff and buffer[1] == 0xd8 then
-        image = self:renderJpegImageDataWithTurboJpeg(data, size, width, height)
-    elseif header == "\137PNG" then
-        logger.dbg("PNG file provided, renderImageData: using LodePNG")
-        image = self:renderPngImageDataWithLodepng(data, size, width, height)
     end
-    if not image and not require("ffi/util").isPSP() then
-        -- fallback to rendering with MuPDF (not on the PSP: MuPDF is not built there)
-        logger.dbg("renderImageData: using MuPDF")
-        image = self:renderImageDataWithMupdf(data, size, width, height)
-    end
-    return image
-end
-
---- Renders PNG image data as a BlitBuffer with LodePNG
---
--- @tparam data string with PNG bytes
--- @int size size of data
--- @int width requested width
--- @int height requested height
--- @treturn BlitBuffer
-function RenderImage:renderPngImageDataWithLodepng(data, size, width, height)
-    if not data or not size or size == 0 then
-        return
-    end
-    local Png = require("ffi/png")
-    local req_n = Device:hasColorScreen() and 3 or 1
-    local ok, decoded, re = pcall(Png.decodeFromData, ffi.string(data, size), req_n)
-    if not ok or not decoded then
-        logger.warn("failed rendering image (LodePNG):", ok and re or decoded)
-        return
-    end
-    local bbtype
-    if re.ncomp == 1 then bbtype = Blitbuffer.TYPE_BB8
-    elseif re.ncomp == 2 then bbtype = Blitbuffer.TYPE_BB8A
-    elseif re.ncomp == 3 then bbtype = Blitbuffer.TYPE_BBRGB24
-    elseif re.ncomp == 4 then bbtype = Blitbuffer.TYPE_BBRGB32
-    else
-        if re.data then ffi.C.free(re.data) end
-        return
-    end
-    local bb = Blitbuffer.new(re.width, re.height, bbtype, re.data)
-    bb:setAllocated(1)
-    local scaled = self:scaleBlitBuffer(bb, width, height, false)
-    if scaled ~= bb then bb:free() end
-    return scaled
+    logger.dbg("renderImageData: using MuPDF")
+    return self:renderImageDataWithMupdf(data, size, width, height)
 end
 
 --- Renders image data as a BlitBuffer with MuPDF
@@ -122,52 +67,20 @@ end
 -- @treturn BlitBuffer
 function RenderImage:renderImageDataWithMupdf(data, size, width, height)
     if not Mupdf then Mupdf = require("ffi/mupdf") end
+    -- NOTE: Kobo's fb is BGR, not RGB. Handle the conversion in MuPDF if needed.
+    if Mupdf.bgr == nil then
+        Mupdf.bgr = false
+        if Device:hasBGRFrameBuffer() then
+            Mupdf.bgr = true
+        end
+    end
     local ok, image = pcall(Mupdf.renderImage, data, size, width, height)
     logger.dbg("Mupdf.renderImage", ok, image)
     if not ok then
-        logger.warn("failed rendering image (MuPDF):", image)
+        logger.info("failed rendering image (mupdf):", image)
         return
     end
     return image
-end
-
---- Renders SVG image data as a BlitBuffer with CRengine (and extended LunaSVG)
---
--- @tparam data string or userdata (pointer) with image bytes
--- @int size size of data
--- @int width requested width
--- @int height requested height
--- @treturn BlitBuffer
-function RenderImage:renderSVGImageDataWithCRengine(data, size, width, height)
-    local cre = require("document/credocument"):engineInit()
-    local image_data, image_w, image_h = cre.renderImageData(data, size, width, height)
-    if not image_data then
-        logger.warn("failed rendering image (SVG/CRengine)")
-        return
-    end
-    local image = Blitbuffer.new(image_w, image_h, Blitbuffer.TYPE_BBRGB32, image_data)
-    return image
-end
-
-function RenderImage:renderJpegImageDataWithTurboJpeg(data, size, width, height)
-    if not data or not size or size == 0 then
-        return
-    end
-    if not Pic then Pic = require("ffi/pic") end
-    Pic.color = Device:hasColorScreen()
-    local ok, jpeg = pcall(Pic.openJPGDocumentFromData, data, size)
-    if not ok then
-        logger.warn("failed rendering image (TurboJPEG):", jpeg)
-        return
-    end
-    local bb = self:scaleBlitBuffer(jpeg.image_bb, width, height)
-    if not bb then
-        logger.warn("failed rendering image (TurboJPEG):", jpeg)
-    end
-    if bb ~= jpeg.image_bb then
-        jpeg:close()
-    end
-    return bb
 end
 
 --- Renders image data as a BlitBuffer with GifLib
@@ -186,7 +99,7 @@ function RenderImage:renderGifImageDataWithGifLib(data, size, want_frames, width
     local ok, gif = pcall(Pic.openGIFDocumentFromData, data, size)
     logger.dbg("Pic.openGIFDocumentFromData", ok)
     if not ok then
-        logger.warn("failed rendering image (GifLib):", gif)
+        logger.info("failed rendering image (giflib):", gif)
         return
     end
     local nb_frames = gif:getPages()
@@ -194,7 +107,7 @@ function RenderImage:renderGifImageDataWithGifLib(data, size, want_frames, width
     if want_frames and nb_frames > 1 then
         -- Returns a regular table, with functions (returning the BlitBuffer)
         -- as values. Users will have to check via type() and call them.
-        -- (The __len metamethod is a Lua 5.2 feature, otherwise we
+        -- (our luajit does not support __len via metatable, otherwise we
         -- could have used setmetatable to avoid creating all the functions)
         local frames = {}
         -- As we don't cache the bb we build on the fly, let caller know it
@@ -210,30 +123,27 @@ function RenderImage:renderGifImageDataWithGifLib(data, size, want_frames, width
             end)
         end
         -- We can't close our GifDocument as long as we may fetch some
-        -- frame: we need to delay it till 'frames' is no longer used.
+        -- frame: we need to delay it till 'frames' is no more used.
         frames.gif_close_needed = true
-        -- Since frames is a plain table, __gc won't work on Lua 5.1/LuaJIT,
-        -- not without a little help from the newproxy hack...
-        frames.gif = gif
-        local frames_mt = {}
-        function frames_mt:__gc()
-            logger.dbg("frames.gc() called, closing GifDocument", self.gif)
-            if self.gif_close_needed then
-                self.gif:close()
-                self.gif_close_needed = nil
+        -- Should happen with that, but __gc seems never called...
+        frames = setmetatable(frames, {
+            __gc = function()
+                logger.dbg("frames.gc() called, closing GifDocument")
+                if frames.gif_close_needed then
+                    gif:close()
+                    frames.gif_close_needed = nil
+                end
+            end
+        })
+        -- so, also set this method, so that ImageViewer can explicitely
+        -- call it onClose.
+        frames.free = function()
+            logger.dbg("frames.free() called, closing GifDocument")
+            if frames.gif_close_needed then
+                gif:close()
+                frames.gif_close_needed = nil
             end
         end
-        -- Much like our other stuff, when we're puzzled about __gc, we do it manually!
-        -- So, also set this method, so that ImageViewer can explicitly call it onClose.
-        function frames:free()
-            logger.dbg("frames.free() called, closing GifDocument", self.gif)
-            if self.gif_close_needed then
-                self.gif:close()
-                self.gif_close_needed = nil
-            end
-        end
-        local setmetatable = require("ffi/__gc")
-        setmetatable(frames, frames_mt)
         return frames
     else
         local page = gif:openPage(1)
@@ -244,90 +154,7 @@ function RenderImage:renderGifImageDataWithGifLib(data, size, want_frames, width
         end
         gif:close()
     end
-    logger.warn("failed rendering image (GifLib)")
-end
-
---- Renders image data as a BlitBuffer with libwebp
---
--- @tparam data string or userdata (pointer) with image bytes
--- @int size size of data
--- @bool[opt=false] want_frames whether to also return a list with animated WebP frames
--- @int width requested width
--- @int height requested height
--- @treturn BlitBuffer or list of frames (each a function returning a Blitbuffer)
-function RenderImage:renderWebpImageDataWithLibwebp(data, size, want_frames, width, height)
-    if not data or not size or size == 0 then
-        return
-    end
-    if not WebP then WebP = require("ffi/webp") end
-    local valid, webp = pcall(WebP.fromData, data, size)
-    if not valid then
-        logger.warn("failed opening image (libwebp):", webp)
-        return
-    end
-    logger.dbg("WebP image, nb frames:", webp.nb_frames)
-    if want_frames and webp.nb_frames > 1 then
-        -- Returns a regular table, with functions (returning the BlitBuffer)
-        -- as values. Users will have to check via type() and call them.
-        -- (The __len metamethod is a Lua 5.2 feature, otherwise we
-        -- could have used setmetatable to avoid creating all the functions)
-        local frames = {}
-        -- As we don't cache the bb we build on the fly, let caller know it
-        -- will have to free them
-        frames.image_disposable = true
-        for i=1, webp.nb_frames do
-            table.insert(frames, function()
-                -- As we may be rescaling the bb we'll get, we can provide no_copy=true
-                -- to avoid the copy done by default, and do it ourselves if needed.
-                local ok, webp_bb = pcall(webp.getFrameImage, webp, i, true)
-                if ok and webp_bb then
-                    local image_bb = self:scaleBlitBuffer(webp_bb, width, height)
-                    if image_bb == webp_bb then -- no scaling was done
-                        image_bb = webp_bb:copy()
-                    end
-                    return image_bb
-                else
-                    logger.warn("failed rendering image frame (libwebp)", i)
-                end
-            end)
-        end
-        -- We can't close our webp object as long as we may fetch some
-        -- frame: we need to delay it till 'frames' is no longer used.
-        frames.webp_close_needed = true
-        -- Since frames is a plain table, __gc won't work on Lua 5.1/LuaJIT,
-        -- not without a little help from the newproxy hack...
-        frames.webp = webp
-        local frames_mt = {}
-        function frames_mt:__gc()
-            logger.dbg("frames.gc() called, closing webp object", self.webp)
-            if self.webp_close_needed then
-                self.webp:close()
-                self.webp_close_needed = nil
-            end
-        end
-        -- Much like our other stuff, when we're puzzled about __gc, we do it manually!
-        -- So, also set this method, so that ImageViewer can explicitly call it onClose.
-        function frames:free()
-            logger.dbg("frames.free() called, closing webp object", self.webp)
-            if self.webp_close_needed then
-                self.webp:close()
-                self.webp_close_needed = nil
-            end
-        end
-        local setmetatable = require("ffi/__gc")
-        setmetatable(frames, frames_mt)
-        return frames
-    else
-        local ok, image_bb = pcall(webp.getFrameImage, webp, 1)
-        if ok and image_bb then
-            image_bb = self:scaleBlitBuffer(image_bb, width, height)
-        else
-            logger.warn("failed rendering image (libwebp)")
-            image_bb = nil
-        end
-        webp:close()
-        return image_bb
-    end
+    logger.info("failed rendering image (giflib)")
 end
 
 --- Rescales a BlitBuffer to the requested size if needed
@@ -359,152 +186,10 @@ function RenderImage:scaleBlitBuffer(bb, width, height, free_orig_bb)
         if not Mupdf then Mupdf = require("ffi/mupdf") end
         scaled_bb = Mupdf.scaleBlitBuffer(bb, width, height)
     end
-    if free_orig_bb ~= false then
+    if not free_orig_bb == false then
         bb:free()
     end
     return scaled_bb
-end
-
---- Renders SVG image file as a BlitBuffer with the best renderer
---
--- @string filename image file path
--- @int width requested width
--- @int height requested height
--- @number zoom requested zoom
--- @treturn BlitBuffer
-function RenderImage:renderSVGImageFile(filename, width, height, zoom)
-    if self.RENDER_SVG_WITH_NANOSVG then
-        return self:renderSVGImageFileWithNanoSVG(filename, width, height, zoom)
-    else
-        return self:renderSVGImageFileWithMupdf(filename, width, height, zoom)
-    end
-end
-
--- For now (with our old MuPDF 1.13), NanoSVG is the best renderer
--- Note that both renderers currently enforce keeping the image's
--- original aspect ratio.
-RenderImage.RENDER_SVG_WITH_NANOSVG = true
-
-function RenderImage:renderSVGImageFileWithNanoSVG(filename, width, height, zoom)
-    if not NnSVG then
-        NnSVG = require("libs/libkoreader-nnsvg")
-    end
-    local ok, svg_image = pcall(NnSVG.new, filename)
-    if not ok then
-        logger.warn("failed rendering SVG (NanoSVG):", svg_image)
-        return
-    end
-    local native_w, native_h = svg_image:getSize()
-    if not zoom then
-        if width and height then
-            -- Original aspect ratio will be kept, we might have
-            -- to center the SVG inside the target width/height
-            zoom = math.min(width/native_w, height/native_h)
-        elseif width then
-            zoom = width/native_w
-        elseif height then
-            zoom = height/native_h
-        else
-            zoom = 1
-        end
-    end
-    -- (Be sure we use integers; using floats can cause glitches)
-    local inner_w = math.ceil(zoom * native_w)
-    local inner_h = math.ceil(zoom * native_h)
-    local offset_x = 0
-    local offset_y = 0
-    if not width then
-        width = inner_w
-    elseif inner_w < width then
-        offset_x = Math.round((width - inner_w) / 2)
-    end
-    if not height then
-        height = inner_h
-    elseif inner_h < height then
-        offset_y = Math.round((height - inner_h) / 2)
-    end
-    logger.dbg("renderSVG", filename, zoom, native_w, native_h, ">", width, height, offset_x, offset_y)
-    local bb = Blitbuffer.new(width, height, Blitbuffer.TYPE_BBRGB32)
-    svg_image:drawTo(bb, zoom, offset_x, offset_y)
-    svg_image:free()
-    return bb, true -- is_straight_alpha=true
-end
-
-function RenderImage:renderSVGImageFileWithMupdf(filename, width, height, zoom)
-    local ok, document = pcall(Mupdf.openDocument, filename)
-    if not ok then
-        logger.warn("failed rendering SVG (MuPDF):", document)
-        return
-    end
-    -- document:layoutDocument(width, height, 20) -- does not change anything
-    if document:getPages() <= 0 then
-        return
-    end
-    local page = document:openPage(1)
-    local DrawContext = require("ffi/drawcontext")
-    local dc = DrawContext.new()
-    local native_w, native_h = page:getSize(dc)
-    if not zoom then
-        if width and height then
-            zoom = math.min(width/native_w, height/native_h)
-        elseif width then
-            zoom = width/native_w
-        elseif height then
-            zoom = height/native_h
-        else
-            zoom = 1
-        end
-    end
-    if not width or not height then
-        width = zoom * native_w
-        height = zoom * native_h
-    end
-    width = math.ceil(width)
-    height = math.ceil(height)
-    logger.dbg("renderSVG", filename, zoom, native_w, native_h, ">", width, height)
-    dc:setZoom(zoom)
-    -- local bb = page:draw_new(dc, width, height, 0, 0)
-    -- MuPDF or our FFI may fail on some icons (appbar.page.fit),
-    -- avoid a crash and return a blank and black image
-    local rendered, bb = pcall(page.draw_new, page, dc, width, height, 0, 0)
-    if not rendered then
-        logger.warn("MuPDF renderSVG error:", bb)
-        bb = nil
-    end
-    page:close()
-    document:close()
-    return bb -- pre-multiplied alpha: no is_straight_alpha=true
-end
-
---- Renders a checkerboard pattern (useful as a fallback after a decoding failure)
-function RenderImage:renderCheckerboard(width, height, bb_type)
-    width = width or 800
-    height = height or 800
-    local bb = Blitbuffer.new(width, height, bb_type or Blitbuffer.TYPE_BB8)
-    local checker_size = bit.rshift(math.min(width, height), 4)
-    local pen_color = Blitbuffer.COLOR_BLACK
-    local row_start
-    for y = 0, height - 1, checker_size do
-        row_start = pen_color
-        for x = 0, width - 1, checker_size do
-            -- BBs are zero-initialized (i.e., black)
-            if pen_color == Blitbuffer.COLOR_WHITE then
-                bb:paintRect(x, y, checker_size, checker_size, Blitbuffer.COLOR_WHITE)
-                -- Alternate pen color every "column"
-                pen_color = Blitbuffer.COLOR_BLACK
-            else
-                pen_color = Blitbuffer.COLOR_WHITE
-            end
-        end
-        -- Alternate initial pen color every "row"
-        if row_start == Blitbuffer.COLOR_WHITE then
-            pen_color = Blitbuffer.COLOR_BLACK
-        else
-            pen_color = Blitbuffer.COLOR_WHITE
-        end
-    end
-
-    return bb
 end
 
 return RenderImage

@@ -3,7 +3,7 @@ describe("InputText widget module", function()
     local equals
     setup(function()
         require("commonrequire")
-        InputText = require("ui/widget/inputtext"):new{}
+        InputText = require("ui/widget/inputtext")
 
         equals = require("util").tableEquals
     end)

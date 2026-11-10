@@ -1,286 +1,275 @@
-local BD = require("ui/bidi")
-local BookList = require("ui/widget/booklist")
 local Device = require("device")
+local DocSettings = require("docsettings")
 local DocumentRegistry = require("document/documentregistry")
-local Event = require("ui/event")
-local ReadCollection = require("readcollection")
+local OpenWithDialog = require("ui/widget/openwithdialog")
+local ConfirmBox = require("ui/widget/confirmbox")
+local Font = require("ui/font")
+local Menu = require("ui/widget/menu")
 local UIManager = require("ui/uimanager")
 local ffi = require("ffi")
-local ffiUtil = require("ffi/util")
-local filemanagerutil = require("apps/filemanager/filemanagerutil")
 local lfs = require("libs/libkoreader-lfs")
-local util = require("util")
+local ffiUtil = require("ffi/util")
+local T = ffiUtil.template
+local C = ffi.C
 local _ = require("gettext")
 local Screen = Device.screen
-local T = ffiUtil.template
+local util = require("util")
+local getFileNameSuffix = util.getFileNameSuffix
+local getFriendlySize = util.getFriendlySize
 
--- NOTE: It's our caller's responsibility to setup a title bar and pass it to us via custom_title_bar (c.f., FileManager)
-local FileChooser = BookList:extend{
+ffi.cdef[[
+int strcoll (const char *str1, const char *str2);
+]]
+
+-- string sort function respecting LC_COLLATE
+local function strcoll(str1, str2)
+    return C.strcoll(str1, str2) < 0
+end
+
+local function kobostrcoll(str1, str2)
+    return str1 < str2
+end
+
+local FileChooser = Menu:extend{
+    cface = Font:getFace("smallinfofont"),
+    no_title = true,
     path = lfs.currentdir(),
     show_path = true,
     parent = nil,
-    show_filter      = G_reader_settings:readSetting("show_filter", {}),
-    show_flat_view   = G_reader_settings:readSetting("show_flat_view", false), -- show all files from subfolders
-    show_hidden      = G_reader_settings:readSetting("show_hidden", false), -- folders/files starting with "."
-    show_unsupported = G_reader_settings:readSetting("show_unsupported", false), -- set to true to ignore file_filter
-    file_filter = nil, -- function defined in the caller, returns true for files to be shown
-    -- NOTE: Input is *always* a relative entry name
-    exclude_dirs = { -- const
-        -- KOReader / Kindle
-        "%.sdr$",
-        -- Kobo
-        "^%.adobe%-digital%-editions$",
-        "^certificates$",
-        "^iink$",
-        "^kepub$",
-        "^markups$",
-        "^webstorage$",
-        "^%.kobo%-images$",
-        -- macOS
-        "^%.fseventsd$",
-        "^%.Trashes$",
-        "^%.Spotlight%-V100$",
-        -- *nix
-        "^%.Trash$",
-        "^%.Trash%-%d+$",
-        -- Windows
-        "^RECYCLED$",
-        "^RECYCLER$",
-        "^%$Recycle%.Bin$",
-        "^System Volume Information$",
-        -- Plato
-        "^%.thumbnail%-previews$",
-        "^%.reading%-states$",
-    },
-    exclude_files = { -- const
-        -- Kobo
-        "^BookReader%.sqlite",
-        "^KoboReader%.sqlite",
-        "^device%.salt%.conf$",
-        -- macOS
-        "^%.DS_Store$",
-        -- *nix
-        "^%.directory$",
-        -- Windows
-        "^Thumbs%.db$",
-        -- Calibre
-        "^driveinfo%.calibre$",
-        "^metadata%.calibre$",
-        -- Plato
-        "^%.fat32%-epoch$",
-        "^%.metadata%.json$",
-    },
-    path_items = nil, -- hash, store last browsed location (item index) for each path
+    show_hidden = nil,
+    exclude_dirs = {"%.sdr$"},
+    collate = "strcoll", -- or collate = "access",
+    reverse_collate = false,
+    path_items = {}, -- store last browsed location(item index) for each path
+    perpage = G_reader_settings:readSetting("items_per_page"),
+    goto_letter = true,
 }
 
--- Cache of content we knew of for directories that are not readable
--- (i.e. /storage/emulated/ on Android that we can meet when coming
--- from readable /storage/emulated/0/ - so we know it contains "0/")
-local unreadable_dir_content = {}
-
-function FileChooser:show_dir(dirname)
-    for _, pattern in ipairs(self.exclude_dirs) do
-        if dirname:match(pattern) then return false end
-    end
-    return true
-end
-
-function FileChooser:show_file(filename, fullpath)
-    for _, pattern in ipairs(self.exclude_files) do
-        if filename:match(pattern) then return false end
-    end
-    if not self.show_unsupported and self.file_filter ~= nil and not self.file_filter(filename) then return false end
-    if FileChooser.show_filter.status and fullpath ~= nil
-        and not FileChooser.show_filter.status[BookList.getBookStatus(fullpath)] then return false end
-    return true
-end
-
 function FileChooser:init()
-    self.is_fm = self.name == "filemanager"
-    self.path_items = {}
-    if lfs.attributes(self.path, "mode") ~= "directory" then
-        self.path = filemanagerutil.getHomeFolder()
+    self.width = Screen:getWidth()
+    -- common dir filter
+    self.dir_filter = function(dirname)
+        for _, pattern in ipairs(self.exclude_dirs) do
+            if dirname:match(pattern) then return false end
+        end
+        return true
     end
-    BookList.init(self)
-    self:refreshPath()
-end
-
-function FileChooser:getList(path, collate)
-    local dirs, files = {}, {}
-    local readable = self:getPathList(path, collate, dirs, files)
-    return dirs, files, readable
-end
-
-function FileChooser:getPathList(path, collate, dirs, files)
-    -- lfs.dir directory without permission will give error
-    local ok, iter, dir_obj = pcall(lfs.dir, path)
-    if ok then
-        unreadable_dir_content[path] = nil
-        for f in iter, dir_obj do
-            if FileChooser.show_hidden or not util.stringStartsWith(f, ".") then
-                local fullpath = path.."/"..f
-                local attributes = lfs.attributes(fullpath) or {}
-                local item = true
-                if attributes.mode == "directory" and f ~= "." and f ~= ".."
-                        and self:show_dir(f) then
-                    if FileChooser.show_flat_view and self.is_fm then
-                        self:getPathList(fullpath, collate, dirs, files)
-                    else
-                        if collate then -- when collate == nil count only to display in folder mandatory
-                            item = self:getListItem(path, f, fullpath, attributes, collate)
+    self.list = function(path, dirs, files)
+        -- lfs.dir directory without permission will give error
+        local ok, iter, dir_obj = pcall(lfs.dir, path)
+        if ok then
+            for f in iter, dir_obj do
+                if self.show_hidden or not string.match(f, "^%.[^.]") then
+                    local filename = path.."/"..f
+                    local attributes = lfs.attributes(filename)
+                    if attributes ~= nil then
+                        if attributes.mode == "directory" and f ~= "." and f~=".." then
+                            if self.dir_filter(filename) then
+                                table.insert(dirs, {name = f,
+                                                    suffix = getFileNameSuffix(f),
+                                                    fullpath = filename,
+                                                    attr = attributes})
+                            end
+                        elseif attributes.mode == "file" then
+                            if self.file_filter == nil or self.file_filter(filename) then
+                                local percent_finished = 0
+                                if self.collate == "percent_unopened_first" or self.collate == "percent_unopened_last" then
+                                    if DocSettings:hasSidecarFile(filename) then
+                                        local docinfo = DocSettings:open(filename)
+                                        percent_finished = docinfo.data.percent_finished
+                                        if percent_finished == nil then
+                                            percent_finished = 0
+                                        end
+                                    end
+                                end
+                                table.insert(files, {name = f,
+                                                     suffix = getFileNameSuffix(f),
+                                                     fullpath = filename,
+                                                     attr = attributes,
+                                                     percent_finished = percent_finished })
+                            end
                         end
-                        table.insert(dirs, item)
                     end
-                -- Always ignore macOS resource forks.
-                elseif attributes.mode == "file" and not util.stringStartsWith(f, "._")
-                        and self:show_file(f, fullpath) then
-                    if collate then -- when collate == nil count only to display in folder mandatory
-                        item = self:getListItem(path, f, fullpath, attributes, collate)
-                    end
-                    table.insert(files, item)
-                end
-            end
-        end
-    else -- error, probably "permission denied"
-        if FileChooser.show_flat_view and self.is_fm then return false end
-        if unreadable_dir_content[path] then
-            -- If we knew about some content (if we had come up from them
-            -- to this directory), have them shown
-            for k, v in pairs(unreadable_dir_content[path]) do
-                if v.attr and v.attr.mode == "directory" then
-                    table.insert(dirs, v)
-                else
-                    table.insert(files, v)
                 end
             end
         end
     end
-    return ok
-end
 
-function FileChooser:getListItem(dirpath, f, fullpath, attributes, collate)
-    local item = {
-        text = f,
-        path = fullpath,
-        attr = attributes,
-    }
-    if attributes.mode == "file" then
-        -- set to false to show all files in regular font
-        -- set to "opened" to show opened files in bold
-        -- otherwise, show new files in bold
-        local show_file_in_bold = G_reader_settings:readSetting("show_file_in_bold")
-        item.bidi_wrap_func = BD.filename
-        item.is_file = true
-        if collate.item_func ~= nil then
-            collate.item_func(item, self.ui)
-        end
-        if show_file_in_bold ~= false then
-            if item.opened == nil then -- could be set in item_func
-                item.opened = BookList.hasBookBeenOpened(item.path)
-            end
-            item.bold = item.opened
-            if show_file_in_bold ~= "opened" then
-                item.bold = not item.bold
-            end
-        end
-        item.dim = self.ui and self.ui.selected_files and self.ui.selected_files[item.path]
-        item.mandatory = self:getMenuItemMandatory(item, collate)
-    else -- folder
-        item.text = item.text.."/"
-        item.bidi_wrap_func = BD.directory
-        if collate.can_collate_mixed and collate.item_func ~= nil then -- used by user plugin/patch, don't remove
-            collate.item_func(item, self.ui)
-        end
-        if dirpath then -- file browser or PathChooser
-            item.mandatory = self:getMenuItemMandatory(item)
+    local strcoll_func = strcoll
+    -- circumvent string collating in Kobo devices. See issue koreader/koreader#686
+    if Device:isKobo() then
+        strcoll_func = kobostrcoll
+    end
+    self.strcoll = function(a, b)
+        if a == nil and b == nil then
+            return false
+        elseif a == nil then
+            return true
+        elseif b == nil then
+            return false
+        elseif DALPHA_SORT_CASE_INSENSITIVE then
+            return strcoll_func(string.lower(a), string.lower(b))
+        else
+            return strcoll_func(a, b)
         end
     end
-    return item
+    self.item_table = self:genItemTableFromPath(self.path)
+    Menu.init(self) -- call parent's init()
 end
 
-function FileChooser:getCollate()
-    local collate_id = G_reader_settings:readSetting("collate", "strcoll")
-    local collate = self.collates[collate_id]
-    if collate ~= nil then
-        return collate, collate_id
-    else
-        G_reader_settings:saveSetting("collate", "strcoll")
-        return self.collates.strcoll, "strcoll"
-    end
-end
+function FileChooser:genItemTableFromPath(path)
+    local dirs = {}
+    local files = {}
+    local up_folder_arrow = "⬆ ../"
 
-function FileChooser:getSortingFunction(collate, reverse_collate)
+    self.list(path, dirs, files)
+
     local sorting
-    -- Only keep the cache if we're an *instance* of FileChooser
-    if self ~= FileChooser then
-        sorting, self.sort_cache = collate.init_sort_func(self.sort_cache)
+    if self.collate == "strcoll" then
+        sorting = function(a, b)
+            return self.strcoll(a.name, b.name)
+        end
+    elseif self.collate == "access" then
+        sorting = function(a, b)
+            return a.attr.access > b.attr.access
+        end
+    elseif self.collate == "modification" then
+        sorting = function(a, b)
+            return a.attr.modification > b.attr.modification
+        end
+    elseif self.collate == "change" then
+        sorting = function(a, b)
+            if DocSettings:hasSidecarFile(a.fullpath) and not DocSettings:hasSidecarFile(b.fullpath) then
+                return false
+            end
+            if not DocSettings:hasSidecarFile(a.fullpath) and DocSettings:hasSidecarFile(b.fullpath) then
+                return true
+            end
+            return a.attr.change > b.attr.change
+        end
+    elseif self.collate == "size" then
+        sorting = function(a, b)
+            return a.attr.size < b.attr.size
+        end
+    elseif self.collate == "type" then
+        sorting = function(a, b)
+            if a.suffix == nil and b.suffix == nil then
+                return self.strcoll(a.name, b.name)
+            else
+                return self.strcoll(a.suffix, b.suffix)
+            end
+        end
+    elseif self.collate == "percent_unopened_first" or self.collate == "percent_unopened_last" then
+        sorting = function(a, b)
+            if DocSettings:hasSidecarFile(a.fullpath) and not DocSettings:hasSidecarFile(b.fullpath) then
+                if self.collate == "percent_unopened_first" then
+                    return false
+                else
+                    return true
+                end
+            end
+            if not DocSettings:hasSidecarFile(a.fullpath) and DocSettings:hasSidecarFile(b.fullpath) then
+                if self.collate == "percent_unopened_first" then
+                    return true
+                else
+                    return false
+                end
+            end
+            if not DocSettings:hasSidecarFile(a.fullpath) and not DocSettings:hasSidecarFile(b.fullpath) then
+                return a.name < b.name
+            end
+
+            if a.attr.mode == "directory" then return a.name < b.name end
+            if b.attr.mode == "directory" then return a.name < b.name end
+
+            return a.percent_finished < b.percent_finished
+        end
     else
-        sorting = collate.init_sort_func()
+        sorting = function(a, b)
+            return a.name < b.name
+        end
     end
 
-    if reverse_collate then
+    if self.reverse_collate then
         local sorting_unreversed = sorting
         sorting = function(a, b) return sorting_unreversed(b, a) end
     end
 
-    return sorting
-end
-
-function FileChooser:clearSortingCache()
-    self.sort_cache = nil
-end
-
-function FileChooser:genItemTableFromPath(path)
-    local collate = self:getCollate()
-    local dirs, files, readable = self:getList(path, collate)
-    return self:genItemTable(dirs, files, path), readable
-end
-
-function FileChooser:genItemTable(dirs, files, path)
-    local collate = self:getCollate()
-    local collate_mixed = G_reader_settings:isTrue("collate_mixed")
-    local reverse_collate = G_reader_settings:isTrue("reverse_collate")
-    local sorting = self:getSortingFunction(collate, reverse_collate)
+    if self.collate ~= "strcoll_mixed" then
+        table.sort(dirs, sorting)
+        table.sort(files, sorting)
+    end
+    if path ~= "/" then table.insert(dirs, 1, {name = ".."}) end
+    if self.show_current_dir_for_hold then table.insert(dirs, 1, {name = "."}) end
 
     local item_table = {}
-    if collate.can_collate_mixed and collate_mixed then
-        table.move(dirs, 1, #dirs, 1, item_table)
-        table.move(files, 1, #files, #item_table + 1, item_table)
+    for i, dir in ipairs(dirs) do
+        -- count sume of directories and files inside dir
+        local sub_dirs = {}
+        local dir_files = {}
+        local subdir_path = self.path.."/"..dir.name
+        self.list(subdir_path, sub_dirs, dir_files)
+        local num_items = #sub_dirs + #dir_files
+        local istr
+        if num_items == 1 then
+            istr = _("1 item")
+        else
+            istr = ffiUtil.template(_("%1 items"), num_items)
+        end
+        local text
+        if dir.name == ".." then
+            text = up_folder_arrow
+        elseif dir.name == "." then -- possible with show_current_dir_for_hold
+            text = _("Long-press to select current directory")
+        else
+            text = dir.name.."/"
+        end
+        table.insert(item_table, {
+            text = text,
+            mandatory = istr,
+            path = subdir_path,
+            is_go_up = dir.name == ".."
+        })
+    end
+
+    -- set to false to show all files in regular font
+    -- set to "opened" to show opened files in bold
+    -- otherwise, show new files in bold
+    local show_file_in_bold = G_reader_settings:readSetting("show_file_in_bold")
+
+    for _, file in ipairs(files) do
+        local full_path = self.path.."/"..file.name
+        local file_size = lfs.attributes(full_path, "size") or 0
+        local sstr = getFriendlySize(file_size)
+        local file_item = {
+            text = file.name,
+            mandatory = sstr,
+            path = full_path
+        }
+        if show_file_in_bold ~= false then
+            file_item.bold = DocSettings:hasSidecarFile(full_path)
+            if show_file_in_bold ~= "opened" then
+                file_item.bold = not file_item.bold
+            end
+        end
+        table.insert(item_table, file_item)
+    end
+
+    if self.collate == "strcoll_mixed" then
+        sorting = function(a, b)
+            if b.text == up_folder_arrow then return false end
+            return self.strcoll(a.text, b.text)
+        end
+        if self.reverse_collate then
+            local sorting_unreversed = sorting
+            sorting = function(a, b) return sorting_unreversed(b, a) end
+        end
         table.sort(item_table, sorting)
-    else
-        table.sort(files, sorting)
-        if not collate.can_collate_mixed then -- keep folders sorted by name not reversed
-            sorting = self:getSortingFunction(self.collates.strcoll)
-        end
-        table.sort(dirs, sorting)
-        table.move(dirs, 1, #dirs, 1, item_table)
-        table.move(files, 1, #files, #item_table + 1, item_table)
     end
-
-    if path then -- file browser or PathChooser
-        if path ~= "/"
-            and not (G_reader_settings:isFalse("show_parent_folder") and self.is_fm)
-            and not (G_reader_settings:isTrue("lock_home_folder") and path == G_reader_settings:readSetting("home_dir"))
-        then
-            table.insert(item_table, 1, {
-                text = BD.mirroredUILayout() and BD.ltr("../ ⬆") or "⬆ ../",
-                path = path.."/..",
-                is_go_up = true,
-            })
-        end
-        if self.show_current_dir_for_hold then
-            table.insert(item_table, 1, {
-                text = _("Long-press here to choose current folder"),
-                bold = true,
-                path = path.."/.",
-            })
-        end
-    end
-
     -- lfs.dir iterated node string may be encoded with some weird codepage on
     -- Windows we need to encode them to utf-8
     if ffi.os == "Windows" then
-        for _, v in ipairs(item_table) do
+        for k, v in pairs(item_table) do
             if v.text then
                 v.text = ffiUtil.multiByteToUTF8(v.text) or ""
             end
@@ -290,146 +279,73 @@ function FileChooser:genItemTable(dirs, files, path)
     return item_table
 end
 
-function FileChooser:getMenuItemMandatory(item, collate)
-    local text
-    if collate then -- file
-        if collate.mandatory_func ~= nil then
-            text = collate.mandatory_func(item)
-        else
-            text = util.getFriendlySize(item.attr.size or 0)
-        end
-        if ReadCollection:isFileInCollections(item.path) then
-            text = "☆ " .. text
-        end
-    else -- folder, count number of folders and files inside it
-        local sub_dirs, dir_files = self:getList(item.path)
-        text = T("%1 \u{F016}", #dir_files)
-        if #sub_dirs > 0 then
-            text = T("%1 \u{F114} ", #sub_dirs) .. text
-        end
-        if self.ui.folder_shortcuts:hasFolderShortcut(item.path, true) then
-            text = "☆ " .. text
-        end
-    end
-    return text
-end
-
-function FileChooser:updateItems(select_number, no_recalculate_dimen)
-    BookList.updateItems(self, select_number, no_recalculate_dimen) -- call parent's updateItems()
+function FileChooser:updateItems(select_number)
+    Menu.updateItems(self, select_number) -- call parent's updateItems()
     self.path_items[self.path] = (self.page - 1) * self.perpage + (select_number or 1)
 end
 
 function FileChooser:refreshPath()
-    local folder_name = select(2, util.splitFilePathName(self.path))
+    local itemmatch = nil
+
+    local _, folder_name = util.splitFilePathName(self.path)
     Screen:setWindowTitle(folder_name)
 
-    local itemmatch
     if self.focused_path then
         itemmatch = {path = self.focused_path}
+        -- We use focused_path only once, but remember it
+        -- for CoverBrower to re-apply it on startup if needed
+        self.prev_focused_path = self.focused_path
         self.focused_path = nil
     end
-    local subtitle = not self.is_fm -- filemanager does it by itself
-        and (self.ui.folder_shortcuts:getShortcutFullName(self.path) or BD.directory(filemanagerutil.abbreviate(self.path)))
-    local items, readable = self:genItemTableFromPath(self.path)
-    self:switchItemTable(nil, items, self.path_items[self.path], itemmatch, subtitle)
-    if readable then
-        self.unreadable_path_warned = nil
-    elseif self.unreadable_path_warned ~= self.path then
-        self.unreadable_path_warned = self.path
-        local InfoMessage = require("ui/widget/infomessage")
-        UIManager:show(InfoMessage:new{
-            text = _("Current folder not readable. Some content may not be shown."),
-            icon = "notice-warning",
-        })
-    end
+
+    self:switchItemTable(nil, self:genItemTableFromPath(self.path), self.path_items[self.path], itemmatch)
 end
 
 function FileChooser:changeToPath(path, focused_path)
-    local real_path = ffiUtil.realpath(path)
-    while real_path == nil do -- go up
-        path = path:match("(.*)/.*")
-        real_path = ffiUtil.realpath(path ~= "" and path or "/")
-    end
-    path = real_path
+    path = ffiUtil.realpath(path)
     self.path = path
 
     if focused_path then
         self.focused_path = focused_path
-        -- We know focused_path is a child of path. In case path is
-        -- not a readable directory, we can have focused_path shown,
-        -- to allow the user to go back in it
-        if not unreadable_dir_content[path] then
-            unreadable_dir_content[path] = {}
-        end
-        if not unreadable_dir_content[path][focused_path] then
-            unreadable_dir_content[path][focused_path] = {
-                text = focused_path:sub(#path > 1 and #path+2 or 2),
-                path = focused_path,
-                attr = lfs.attributes(focused_path),
-            }
-        end
     end
 
-    if self.is_fm then
-        self.ui:handleEvent(Event:new("PathChanged", path))
+    self:refreshPath()
+    self:onPathChanged(path)
+end
+
+function FileChooser:changePageToPath(path)
+    if not path then return end
+    for num, item in ipairs(self.item_table) do
+        if item.path == path then
+            local page = math.floor((num-1) / self.perpage) + 1
+            if page ~= self.page then
+                self:onGotoPage(page)
+            end
+            break
+        end
     end
+end
+
+function FileChooser:toggleHiddenFiles()
+    self.show_hidden = not self.show_hidden
     self:refreshPath()
 end
 
-function FileChooser:onHome()
-    local FileManager = require("apps/filemanager/filemanager")
-    UIManager:setSuspendRepaints(true)
-    if FileManager.instance then
-        -- FileChooser is a Booklist (which in turn is a Menu), we need
-        -- to redirect Home calls otherwise we will unalive ourselves,
-        -- taking the whole application down with us.
-        return FileManager.instance:onHome()
-    end
-    self:onClose()
-    UIManager:nextTick(function()
-        UIManager:sendEvent(Event:new("Home"))
-    end)
-    return true
+function FileChooser:setCollate(collate)
+    self.collate = collate
+    self:refreshPath()
 end
 
-function FileChooser:goHome()
-    local home_dir = G_reader_settings:readSetting("home_dir")
-    if not home_dir or lfs.attributes(home_dir, "mode") ~= "directory" then
-        -- Try some sane defaults, depending on platform
-        home_dir = Device.home_dir
-    end
-    if home_dir then
-        -- Jump to the first page if we're already home
-        if self.path and home_dir == self.path then
-            self:onGotoPage(1)
-            -- Also pick up new content, if any.
-            self:refreshPath()
-        else
-            self:changeToPath(home_dir)
-        end
-        return true
-    end
-end
-
-function FileChooser:onFolderUp()
-    if not (G_reader_settings:isTrue("lock_home_folder") and
-            self.path == G_reader_settings:readSetting("home_dir")) then
-        self:changeToPath(string.format("%s/..", self.path), self.path)
-    end
-end
-
-function FileChooser:toggleShowFilesMode(mode)
-    -- modes: "show_flat_view", "show_hidden", "show_unsupported"
-    FileChooser[mode] = not FileChooser[mode]
-    G_reader_settings:saveSetting(mode, FileChooser[mode])
+function FileChooser:toggleReverseCollate()
+    self.reverse_collate = not self.reverse_collate
     self:refreshPath()
 end
 
 function FileChooser:onMenuSelect(item)
     -- parent directory of dir without permission get nil mode
     -- we need to change to parent path in this case
-    if item.is_file then
-        self:onFileSelect(item)
+    if lfs.attributes(item.path, "mode") == "file" then
+        self:onFileSelect(item.path)
     else
         self:changeToPath(item.path, item.is_go_up and self.path)
     end
@@ -437,61 +353,117 @@ function FileChooser:onMenuSelect(item)
 end
 
 function FileChooser:onMenuHold(item)
-    self:onFileHold(item)
+    self:onFileHold(item.path)
     return true
 end
 
-function FileChooser:onFileSelect(item)
+function FileChooser:onFileSelect(file)
     UIManager:close(self)
     return true
 end
 
-function FileChooser:onFileHold(item)
+function FileChooser:onFileHold(file)
     return true
 end
 
-function FileChooser:getNextOrPreviousFileInFolder(curr_file, prev)
-    local show_filter = FileChooser.show_filter
-    FileChooser.show_filter = {}
-    local curr_path = curr_file:match(".*/"):gsub("/$", "")
-    local item_table = self:genItemTableFromPath(curr_path)
-    FileChooser.show_filter = show_filter
-    local top_i, step, is_curr_file_found
-    if prev then
-        top_i = #item_table + 1
-        step = -1
-    else
-        step = 1
-    end
-    for i = 1, #item_table do
-        local idx = prev and top_i - i or i
-        if not is_curr_file_found and item_table[idx].path == curr_file then
-            is_curr_file_found = true
-        end
-        if is_curr_file_found then
-            local file = item_table[idx + step]
-            if file and file.is_file and DocumentRegistry:hasProvider(file.path)
-                    and BookList.getBookStatus(file.path) ~= "complete" then
-                return file.path
-            end
-        end
-    end
+function FileChooser:onPathChanged(path)
+    return true
 end
 
--- Used in file manager select mode to select all files in a folder,
--- that are visible in all file browser pages, without subfolders.
-function FileChooser:selectAllFilesInFolder(do_select)
-    for _, item in ipairs(self.item_table) do
-        if item.is_file then
-            if do_select then
-                self.ui.selected_files[item.path] = true
-                item.dim = true
-            else
-                item.dim = nil
+function FileChooser:getNextFile(curr_file)
+    local next_file
+    for index, data in pairs(self.item_table) do
+        if data.path == curr_file then
+            if index+1 <= #self.item_table then
+                next_file = self.item_table[index+1].path
+                if lfs.attributes(next_file, "mode") == "file" and DocumentRegistry:hasProvider(next_file) then
+                    break
+                else
+                    next_file = nil
+                end
             end
         end
     end
-    self:updateItems(1, true)
+    return next_file
+end
+
+function FileChooser:showSetProviderButtons(file, filemanager_instance, reader_ui)
+    local __, filename_pure = util.splitFilePathName(file)
+    local filename_suffix = util.getFileNameSuffix(file)
+
+    local buttons = {}
+    local radio_buttons = {}
+    local providers = DocumentRegistry:getProviders(file)
+
+    for ___, provider in ipairs(providers) do
+        -- we have no need for extension, mimetype, weights, etc. here
+        provider = provider.provider
+        table.insert(radio_buttons, {
+            {
+                text = provider.provider_name,
+                checked = DocumentRegistry:getProvider(file) == provider,
+                provider = provider,
+            },
+        })
+    end
+
+    table.insert(buttons, {
+        {
+            text = _("Cancel"),
+            callback = function()
+                UIManager:close(self.set_provider_dialog)
+            end,
+        },
+        {
+            text = _("Open"),
+            is_enter_default = true,
+            callback = function()
+                local provider = self.set_provider_dialog.radio_button_table.checked_button.provider
+
+                -- always for this file
+                if self.set_provider_dialog._check_file_button.checked then
+                    UIManager:show(ConfirmBox:new{
+                        text = T(_("Always open '%2' with %1?"),
+                                   provider.provider_name, filename_pure),
+                        ok_text = _("Always"),
+                        ok_callback = function()
+                            DocumentRegistry:setProvider(file, provider, false)
+
+                            filemanager_instance:onClose()
+                            reader_ui:showReader(file, provider)
+                            UIManager:close(self.set_provider_dialog)
+                        end,
+                    })
+                -- always for all files of this file type
+                elseif self.set_provider_dialog._check_global_button.checked then
+                    UIManager:show(ConfirmBox:new{
+                        text = T(_("Always open %2 files with %1?"),
+                                 provider.provider_name, filename_suffix),
+                        ok_text = _("Always"),
+                        ok_callback = function()
+                            DocumentRegistry:setProvider(file, provider, true)
+
+                            filemanager_instance:onClose()
+                            reader_ui:showReader(file, provider)
+                            UIManager:close(self.set_provider_dialog)
+                        end,
+                    })
+                else
+                    -- just once
+                    filemanager_instance:onClose()
+                    reader_ui:showReader(file, provider)
+                    UIManager:close(self.set_provider_dialog)
+                end
+            end,
+        },
+    })
+
+    self.set_provider_dialog = OpenWithDialog:new{
+        title = T(_("Open %1 with:"), filename_pure),
+        radio_buttons = radio_buttons,
+        buttons = buttons,
+    }
+    UIManager:show(self.set_provider_dialog)
 end
 
 return FileChooser

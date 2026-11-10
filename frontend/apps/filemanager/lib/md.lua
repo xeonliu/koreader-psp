@@ -1,5 +1,4 @@
--- From https://github.com/bakpakin/luamd revision 388ce799d93e899e4d673cdc6d522f12310822bd
-local FFIUtil = require("ffi/util")
+-- From https://github.com/bakpakin/luamd revision 5e8fa39173afecd73913d27e0f0e63649b01fb5b
 
 --[[
 Copyright (c) 2016 Calvin Rose <calsrose@gmail.com>
@@ -64,7 +63,7 @@ end
 -- Line Level Operations
 --------------------------------------------------------------------------------
 
-local lineDelimiters = {'`', '__', '**', '_', '*', '~~'}
+local lineDelimiters = {'`', '__', '**', '_', '*'}
 local function findDelim(str, start, max)
     local delim = nil
     local min = 1/0
@@ -112,7 +111,7 @@ local function linkEscape(str, t)
     if nomatches then externalLinkEscape(str, t) end
 end
 
-local lineDeimiterNames = {['`'] = 'code', ['__'] = 'strong', ['**'] = 'strong', ['_'] = 'em', ['*'] = 'em', ['~~'] = 'strike' }
+local lineDeimiterNames = {['`'] = 'code', ['__'] = 'strong', ['**'] = 'strong', ['_'] = 'em', ['*'] = 'em' }
 local function lineRead(str, start, finish)
     start, finish = start or 1, finish or #str
     local searchIndex = start
@@ -420,8 +419,7 @@ end
 
 local function renderAttributes(attributes)
     local accum = {}
-    -- KOReader: oderedPairs instead of pairs
-    for k, v in FFIUtil.orderedPairs(attributes) do
+    for k, v in pairs(attributes) do
         accum[#accum + 1] = format("%s=\"%s\"", k, v)
     end
     return concat(accum, ' ')

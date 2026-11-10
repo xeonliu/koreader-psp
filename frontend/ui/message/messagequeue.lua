@@ -3,19 +3,14 @@ local Event = require("ui/event")
 local logger = require("logger")
 
 local _ = require("ffi/zeromq_h")
-local czmq = ffi.loadlib("czmq", "4")
+local czmq = ffi.load("libs/libczmq.so.1")
 
 local MessageQueue = {}
 
-function MessageQueue:extend(subclass_prototype)
-    local o = subclass_prototype or {}
+function MessageQueue:new(o)
+    o = o or {}
     setmetatable(o, self)
     self.__index = self
-    return o
-end
-
-function MessageQueue:new(o)
-    o = self:extend(o)
     if o.init then o:init() end
     self.messages = {}
     return o

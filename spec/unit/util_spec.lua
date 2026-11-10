@@ -6,14 +6,14 @@ describe("util module", function()
         util = require("util")
     end)
 
-    it("should strip punctuation marks around word", function()
-        assert.is_equal("hello world", util.stripPunctuation("\"hello world\""))
-        assert.is_equal("hello world", util.stripPunctuation("\"hello world?\""))
-        assert.is_equal("hello, world", util.stripPunctuation("\"hello, world?\""))
-        assert.is_equal("你好", util.stripPunctuation("“你好“"))
-        assert.is_equal("你好", util.stripPunctuation("“你好?“"))
-        assert.is_equal("", util.stripPunctuation(""))
-        assert.is_nil(util.stripPunctuation(nil))
+    it("should strip punctuations around word", function()
+        assert.is_equal("hello world", util.stripePunctuations("\"hello world\""))
+        assert.is_equal("hello world", util.stripePunctuations("\"hello world?\""))
+        assert.is_equal("hello, world", util.stripePunctuations("\"hello, world?\""))
+        assert.is_equal("你好", util.stripePunctuations("“你好“"))
+        assert.is_equal("你好", util.stripePunctuations("“你好?“"))
+        assert.is_equal("", util.stripePunctuations(""))
+        assert.is_nil(util.stripePunctuations(nil))
     end)
 
     describe("gsplit()", function()
@@ -31,9 +31,9 @@ describe("util module", function()
             for arg1 in util.gsplit(command, "[\"'].-[\"']", true) do
                 for arg2 in util.gsplit(arg1, "^[^\"'].-%s+", true) do
                     for arg3 in util.gsplit(arg2, "[\"']", false) do
-                        local trimmed = util.trim(arg3)
-                        if trimmed ~= "" then
-                            table.insert(argv, trimmed)
+                        local trimed = arg3:gsub("^%s*(.-)%s*$", "%1")
+                        if trimed ~= "" then
+                            table.insert(argv, trimed)
                         end
                     end
                 end
@@ -88,23 +88,6 @@ describe("util module", function()
                 "彩","虹","是","通","过","太","阳","光","的","折","射","引","起","的","。",
             }, words)
         end)
-        it("should split Japanese words", function()
-            local words = util.splitToWords("色は匂へど散りぬるを我が世誰ぞ常ならむ")
-            assert.are_same({
-                "色","は","匂","へ","ど","散","り","ぬ","る","を",
-                "我","が","世","誰","ぞ","常","な","ら","む",
-            }, words)
-        end)
-        it("should split Korean words", function()
-            -- Technically splitting on spaces is correct but we treat Korean
-            -- as if it were any other CJK text.
-            local words = util.splitToWords("대한민국의 국기는 대한민국 국기법에 따라 태극기")
-            assert.are_same({
-                "대","한","민","국","의"," ","국","기","는"," ",
-                "대","한","민","국"," ","국","기","법","에"," ",
-                "따","라"," ","태","극","기",
-            }, words)
-        end)
         it("should split words of multilingual text", function()
             local words = util.splitToWords("BBC纪录片")
             assert.are_same({"BBC", "纪", "录", "片"}, words)
@@ -125,7 +108,7 @@ describe("util module", function()
                     table.insert(table_of_words, word)
                     word = ""
                 end
-                if i == #table_chars and word ~= "" then table.insert(table_of_words, word) end
+                if i == #table_chars then table.insert(table_of_words, word) end
             end
             assert.are_same({
                 "Pójdźże, ",
@@ -138,7 +121,7 @@ describe("util module", function()
                 "gavilán",
             }, table_of_words)
         end)
-        it("should split text to line - CJK Chinese", function()
+        it("should split text to line - CJK", function()
             local text = "彩虹是通过太阳光的折射引起的。"
             local word = ""
             local table_of_words = {}
@@ -151,74 +134,10 @@ describe("util module", function()
                     table.insert(table_of_words, word)
                     word = ""
                 end
-                if i == #table_chars and word ~= "" then table.insert(table_of_words, word) end
+                if i == #table_chars then table.insert(table_of_words, word) end
             end
             assert.are_same({
                 "彩","虹","是","通","过","太","阳","光","的","折","射","引","起","的","。",
-            }, table_of_words)
-        end)
-        it("should split text to line - CJK Japanese", function()
-            local text = "色は匂へど散りぬるを我が世誰ぞ常ならむ"
-            local word = ""
-            local table_of_words = {}
-            local c
-            local table_chars = util.splitToChars(text)
-            for i = 1, #table_chars  do
-                c = table_chars[i]
-                word = word .. c
-                if util.isSplittable(c) then
-                    table.insert(table_of_words, word)
-                    word = ""
-                end
-                if i == #table_chars and word ~= "" then table.insert(table_of_words, word) end
-            end
-            assert.are_same({
-                "色","は","匂","へ","ど","散","り","ぬ","る","を",
-                "我","が","世","誰","ぞ","常","な","ら","む",
-            }, table_of_words)
-        end)
-        it("should split text to line - CJK Korean", function()
-            local text = "대한민국의 국기는 대한민국 국기법에 따라 태극기"
-            local word = ""
-            local table_of_words = {}
-            local c
-            local table_chars = util.splitToChars(text)
-            for i = 1, #table_chars  do
-                c = table_chars[i]
-                word = word .. c
-                if util.isSplittable(c) then
-                    table.insert(table_of_words, word)
-                    word = ""
-                end
-                if i == #table_chars and word ~= "" then table.insert(table_of_words, word) end
-            end
-            assert.are_same({
-                "대","한","민","국","의"," ","국","기","는"," ",
-                "대","한","민","국"," ","국","기","법","에"," ",
-                "따","라"," ","태","극","기",
-            }, table_of_words)
-        end)
-        it("should split text to line - mixed CJK and latin", function()
-            local text = "This is Russian: русский язык, Chinese: 汉语, Japanese: 日本語、 Korean: 한국어。"
-            local word = ""
-            local table_of_words = {}
-            local c
-            local table_chars = util.splitToChars(text)
-            for i = 1, #table_chars  do
-                c = table_chars[i]
-                word = word .. c
-                if util.isSplittable(c) then
-                    table.insert(table_of_words, word)
-                    word = ""
-                end
-                if i == #table_chars and word ~= "" then table.insert(table_of_words, word) end
-            end
-            assert.are_same({
-                "This ", "is ",
-                "Russian: ", "русский ", "язык, ",
-                "Chinese: ", "汉","语",", ",
-                "Japanese: ", "日","本","語","、", " ",
-                "Korean: ", "한","국","어","。",
             }, table_of_words)
         end)
         it("should split text to line with next_c - unicode", function()
@@ -235,7 +154,7 @@ describe("util module", function()
                     table.insert(table_of_words, word)
                     word = ""
                 end
-                if i == #table_chars and word ~= "" then table.insert(table_of_words, word) end
+                if i == #table_chars then table.insert(table_of_words, word) end
             end
             assert.are_same({
                 "Ce ",
@@ -268,7 +187,7 @@ describe("util module", function()
                     table.insert(table_of_words, word)
                     word = ""
                 end
-                if i == #table_chars and word ~= "" then table.insert(table_of_words, word) end
+                if i == #table_chars then table.insert(table_of_words, word) end
             end
             assert.are_same({
                 "Ce ",
@@ -318,30 +237,6 @@ describe("util module", function()
         test(nil, "", "")
         test("", "", "")
         assert.are_same("a", util.splitFileNameSuffix("a.txt"))
-    end)
-
-    describe("getSafeFileName()", function()
-        it("should replace unsafe characters", function()
-            assert.is_equal("___", util.getSafeFilename("|||"))
-        end)
-        it("should truncate any characters beyond the limit", function()
-            assert.is_equal("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", util.getSafeFilename("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
-        end)
-        it("should truncate extension beyond the limit", function()
-            assert.is_equal("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", util.getSafeFilename("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
-        end)
-        it("should strip HTML from the filename", function()
-            assert.is_equal("lalala", util.getSafeFilename("<span>lalala</span>"))
-        end)
-    end)
-
-    describe("partialMD5()", function()
-        it("should calculate partial md5 hash of pdf file", function()
-            assert.is_equal(util.partialMD5("spec/front/unit/data/tall.pdf"), "41cce710f34e5ec21315e19c99821415")
-        end)
-        it("should calculate partial md5 hash of epub file", function()
-            assert.is_equal(util.partialMD5("spec/front/unit/data/leaves.epub"), "59d481d168cca6267322f150c5f6a2a3")
-        end)
     end)
 
     describe("fixUtf8()", function()
@@ -408,7 +303,7 @@ describe("util module", function()
 
     describe("isEmptyDir()", function()
         it("should return true on empty dir", function()
-            assert.is_true(util.isEmptyDir(DataStorage:getDataDir() .. "/history")) -- should be empty during unit tests
+            assert.is_true(util.isEmptyDir(DataStorage:getDataDir() .. "/data/dict")) -- should be empty during unit tests
         end)
         it("should return false on non-empty dir", function()
             assert.is_false(util.isEmptyDir(DataStorage:getDataDir())) -- should contain subdirectories
@@ -422,43 +317,23 @@ describe("util module", function()
         describe("should convert bytes to friendly size as string", function()
             it("to 100.0 GB", function()
                 assert.is_equal("100.0 GB",
-                                util.getFriendlySize(100*1000*1000*1000))
-            end)
-            it("to 1.0 GB", function()
-                assert.is_equal("1.0 GB",
-                                util.getFriendlySize(1000*1000*1000+1))
-            end)
-            it("to 1.0 MB", function()
-                assert.is_equal("1.0 MB",
-                                util.getFriendlySize(1000*1000+1))
-            end)
-            it("to 1.0 kB", function()
-                assert.is_equal("1.0 kB",
-                                util.getFriendlySize(1000+1))
-            end)
-            it("to B", function()
-                assert.is_equal("10 B",
-                                util.getFriendlySize(10))
-            end)
-            it("to 100.0 GB with minimum field width alignment", function()
-                assert.is_equal(" 100.0 GB",
-                                util.getFriendlySize(100*1000*1000*1000, true))
+                                util.getFriendlySize(100*1024*1024*1024))
             end)
             it("to 1.0 GB with minimum field width alignment", function()
-                assert.is_equal("   1.0 GB",
-                                util.getFriendlySize(1000*1000*1000+1, true))
+                assert.is_equal(" 1.0 GB",
+                                util.getFriendlySize(1024*1024*1024+1))
             end)
             it("to 1.0 MB with minimum field width alignment", function()
-                assert.is_equal("   1.0 MB",
-                                util.getFriendlySize(1000*1000+1, true))
+                assert.is_equal(" 1.0 MB",
+                                util.getFriendlySize(1024*1024+1))
             end)
-            it("to 1.0 kB with minimum field width alignment", function()
-                assert.is_equal("   1.0 kB",
-                                util.getFriendlySize(1000+1, true))
+            it("to 1.0 KB with minimum field width alignment", function()
+                assert.is_equal(" 1.0 KB",
+                                util.getFriendlySize(1024+1))
             end)
-            it("to B with minimum field width alignment", function()
-                assert.is_equal("    10 B",
-                                util.getFriendlySize(10, true))
+            it("to B", function()
+                assert.is_equal("100 B",
+                                util.getFriendlySize(100))
             end)
         end)
         it("should return nil when input is nil or false", function()
@@ -470,12 +345,53 @@ describe("util module", function()
         end)
     end)
 
+    describe("secondsToClock()", function()
+        it("should convert seconds to 00:00 format", function()
+            assert.is_equal("00:00",
+                            util.secondsToClock(0, true))
+            assert.is_equal("00:01",
+                            util.secondsToClock(60, true))
+        end)
+        it("should round seconds to minutes in 00:00 format", function()
+            assert.is_equal("00:01",
+                            util.secondsToClock(89, true))
+            assert.is_equal("00:02",
+                            util.secondsToClock(90, true))
+            assert.is_equal("00:02",
+                            util.secondsToClock(110, true))
+            assert.is_equal("00:02",
+                            util.secondsToClock(120, true))
+            assert.is_equal("01:00",
+                            util.secondsToClock(3600, true))
+            assert.is_equal("01:00",
+                            util.secondsToClock(3599, true))
+            assert.is_equal("01:00",
+                            util.secondsToClock(3570, true))
+            assert.is_equal("00:59",
+                            util.secondsToClock(3569, true))
+        end)
+        it("should convert seconds to 00:00:00 format", function()
+            assert.is_equal("00:00:00",
+                            util.secondsToClock(0))
+            assert.is_equal("00:01:00",
+                            util.secondsToClock(60))
+            assert.is_equal("00:01:29",
+                            util.secondsToClock(89))
+            assert.is_equal("00:01:30",
+                            util.secondsToClock(90))
+            assert.is_equal("00:01:50",
+                            util.secondsToClock(110))
+            assert.is_equal("00:02:00",
+                            util.secondsToClock(120))
+        end)
+    end)
+
     describe("urlEncode() and urlDecode", function()
         it("should encode string", function()
             assert.is_equal("Secret_Password123", util.urlEncode("Secret_Password123"))
             assert.is_equal("Secret%20Password123", util.urlEncode("Secret Password123"))
-            assert.is_equal("S%2Acret%3DP%40%24%24word%2A%21%23%3F", util.urlEncode("S*cret=P@$$word*!#?"))
-            assert.is_equal("~%5E-_%5C%25%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%2F%3F%23%5B%5D",
+            assert.is_equal("S*cret%3DP%40%24%24word*!%23%3F", util.urlEncode("S*cret=P@$$word*!#?"))
+            assert.is_equal("~%5E-_%5C%25!*'()%3B%3A%40%26%3D%2B%24%2C%2F%3F%23%5B%5D",
                 util.urlEncode("~^-_\\%!*'();:@&=+$,/?#[]"))
         end)
         it("should decode string", function()

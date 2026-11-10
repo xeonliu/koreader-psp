@@ -1,30 +1,70 @@
--- Start with the english keyboard layout
-local fr_keyboard = dofile("frontend/ui/data/keyboardlayouts/en_keyboard.lua")
-
--- Swap the four AZWQ keys (only in the lowercase and
--- uppercase letters layouts) to change it from QWERTY to AZERTY
-local keys = fr_keyboard.keys
-keys[2][1][1], keys[3][1][1] = keys[3][1][1], keys[2][1][1] -- Q <> A
-keys[2][1][2], keys[3][1][2] = keys[3][1][2], keys[2][1][2] -- q <> a
-keys[2][2][1], keys[4][2][1] = keys[4][2][1], keys[2][2][1] -- W <> Z
-keys[2][2][2], keys[4][2][2] = keys[4][2][2], keys[2][2][2] -- w <> z
--- And as A/a is now near the left border, re-order the popup keys so that we can get
--- the à (very common in french) with a swipe south-east instead of hard north-west
-keys[2][1][1].southeast, keys[2][1][1].northwest = keys[2][1][1].northwest, keys[2][1][1].southeast
-keys[2][1][2].southeast, keys[2][1][2].northwest = keys[2][1][2].northwest, keys[2][1][2].southeast
-
--- Swap the M and ',' keys
-keys[3][10][1], keys[4][8][1] = keys[4][8][1], keys[3][10][1] -- M <> ;
-keys[3][10][2], keys[4][8][2] = keys[4][8][2], keys[3][10][2] -- m <> ,
--- And as M/m is now near the right border, swap its popup east swipes to be west swipes
-keys[3][10][1].northwest, keys[3][10][1].northeast = keys[3][10][1].northeast, nil
-keys[3][10][2].northwest, keys[3][10][2].northeast = keys[3][10][2].northeast, nil
-keys[3][10][1].west, keys[3][10][1].east = keys[3][10][1].east, nil
-keys[3][10][2].west, keys[3][10][2].east = keys[3][10][2].east, nil
-
--- Remove the "space" string
-keys[5][4].label = ""
--- Or, if we'd rather have it in french:
--- keys[5][4].label = "espace"
-
-return fr_keyboard
+return {
+    shiftmode_keys = {["Shift"] = true},
+    symbolmode_keys = {["Sym"] = true, ["ABC"] = true},
+    utf8mode_keys = {["IM"] = true},
+    umlautmode_keys = {["Äéß"] = true},
+    keys = {
+        -- first row
+        {  --  1           2       3       4       5       6       7       8       9       10      11      12
+            { "A",        "a",    "„",    "0",    "Й",    "й",    "?",    "!",    "Å",    "å",    "1",    "ª", },
+            { "Z",        "z",    "!",    "1",    "Ц",    "ц",    "(",    "1",    "Ä",    "ä",    "2",    "º", },
+            { "E",        "e",    "@",    "2",    "У",    "у",    ")",    "2",    "Ö",    "ö",    "3",    "¡", },
+            { "R",        "r",    "#",    "3",    "К",    "к",    "~",    "3",    "ß",    "ß",    "4",    "¿", },
+            { "T",        "t",    "+",    "=",    "Е",    "е",    "Ә",    "ә",    "À",    "à",    "5",    "¼", },
+            { "Y",        "y",    "€",    "(",    "Н",    "н",    "І",    "і",    "Â",    "â",    "6",    "½", },
+            { "U",        "u",    "‰",    ")",    "Г",    "г",    "Ң",    "ң",    "Æ",    "æ",    "7",    "¾", },
+            { "I",        "i",    "|",    "\\",    "Ш",    "ш",    "Ғ",    "ғ",    "Ü",    "ü",    "8",    "©", },
+            { "O",        "o",    "?",    "/",    "Щ",    "щ",    "Х",    "х",    "È",    "è",    "9",    "®", },
+            { "P",        "p",    "~",    "`",    "З",    "з",    "Ъ",    "ъ",    "É",    "é",    "0",    "™", },
+        },
+        -- second row
+        {  --  1           2       3       4       5       6       7       8       9       10      11      12
+            { "Q",        "q",    "…",    "@",    "Ф",    "ф",    "*",    "0",    "Ê",    "ê",    "Ş",    "ş", },
+            { "S",        "s",    "$",    "4",    "Ы",    "ы",    "+",    "4",    "Ë",    "ë",    "İ",    "ı", },
+            { "D",        "d",    "%",    "5",    "В",    "в",    "-",    "5",    "Î",    "î",    "Ğ",    "ğ", },
+            { "F",        "f",    "^",    "6",    "А",    "а",    "=",    "6",    "Ï",    "ï",    "Ć",    "ć", },
+            { "G",        "g",    ":",    ";",    "П",    "п",    "Ү",    "ү",    "Ô",    "ô",    "Č",    "č", },
+            { "H",        "h",    "\"",   "'",    "Р",    "р",    "Ұ",    "ұ",    "Œ",    "œ",    "Đ",    "đ", },
+            { "J",        "j",    "{",    "[",    "О",    "о",    "Қ",    "қ",    "Ù",    "ù",    "Š",    "š", },
+            { "K",        "k",    "}",    "]",   "Л",    "л",    "Ж",    "ж",    "Û",    "û",    "Ž",    "ž", },
+            { "L",        "l",    "_",    "-",    "Д",    "д",    "Э",    "э",    "Ÿ",    "ÿ",    "Ő",    "ő", },
+        },
+        -- third row
+        {  --  1           2       3       4       5       6       7       8       9       10      11      12
+            { label = "Shift",
+              icon = "resources/icons/appbar.arrow.shift.png",
+              width = 1.5
+            },
+            { "W",        "w",    "&",    "7",    "Я",    "я",    ":",    "7",    "Á",    "á",    "Ű",    "ű", },
+            { "X",        "x",    "*",    "8",    "Ч",    "ч",    ";",    "8",    "Ø",    "ø",    "Ã",    "ã", },
+            { "C",        "c",    "£",    "9",    "С",    "с",    "'",    "9",    "Í",    "í",    "Þ",    "þ", },
+            { "V",        "v",    "<",    "‚",    "М",    "м",    "Ө",    "ө",    "Ñ",    "ñ",    "Ý",    "ý", },
+            { "B",        "b",    ">",    ".",    "И",    "и",    "Һ",    "һ",    "Ó",    "ó",    "†",    "‡", },
+            { "N",        "n",    "‘",    "↑",    "Т",    "т",    "Б",    "б",    "Ú",    "ú",    "–",    "—", },
+            { "M",        "m",    "’",    "↓",    "Ь",    "ь",    "Ю",    "ю",    "Ç",    "ç",    "…",    "¨", },
+            { label = "Backspace",
+              icon = "resources/icons/appbar.clear.reflect.horizontal.png",
+              width = 1.5
+            },
+        },
+        -- fourth row
+        {
+            { "Sym",     "Sym",  "ABC",  "ABC",  "Sym",  "Sym",  "ABC",  "ABC",  "Sym",  "Sym",  "ABC",  "ABC",
+              width = 1.5},
+            { label = "IM",
+              icon = "resources/icons/appbar.globe.wire.png",
+            },
+            { "Äéß",     "Äéß",  "Äéß",  "Äéß",  "Äéß",  "Äéß",  "Äéß",  "Äéß",  "Äéß",  "Äéß",  "Äéß",  "Äéß", },
+            { label = "space",
+              " ",        " ",    " ",    " ",    " ",    " ",    " ",    " ",    " ",    " ",    " ",    " ",
+              width = 3.0},
+            { ",",        ",",    "“",    "←",    ",",    ",",    "Ё",    "ё",    "Ũ",   "ũ",    ",",    ",", },
+            { ".",        ".",    "”",    "→",    ".",    ".",    ".",    ".",    "Ĩ",   "ĩ",    ".",    ".", },
+            { label = "Enter",
+              "\n",       "\n",   "\n",   "\n",   "\n",   "\n",   "\n",   "\n",   "\n",   "\n",   "\n",   "\n",
+              icon = "resources/icons/appbar.arrow.enter.png",
+              width = 1.5,
+            },
+        },
+    },
+}

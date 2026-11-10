@@ -84,7 +84,7 @@
 --
 --  Usage
 --  =====
---      Parsed as delegate in xmlParser constructor and called
+--      Pased as delegate in xmlParser constructor and called
 --      as callback by xmlParser:parse(xml) method.
 --
 --      See textxml.lua for examples

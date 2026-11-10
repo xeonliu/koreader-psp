@@ -1,48 +1,45 @@
 describe("ReaderScreenshot module", function()
-    local DataStorage, DocumentRegistry, ReaderUI, lfs, UIManager, Event, Screen
+    local DocumentRegistry, ReaderUI, lfs, UIManager, Event
+    local sample_epub = "spec/front/unit/data/leaves.epub"
     local readerui
-
     setup(function()
         require("commonrequire")
-        disable_plugins()
-        DataStorage = require("datastorage")
         DocumentRegistry = require("document/documentregistry")
         ReaderUI = require("apps/reader/readerui")
         lfs = require("libs/libkoreader-lfs")
         UIManager = require("ui/uimanager")
         Event = require("ui/event")
-        Screen = require("device").screen
 
         readerui = ReaderUI:new{
-            dimen = Screen:getSize(),
-            document = DocumentRegistry:openDocument("spec/front/unit/data/sample.txt"),
+            document = DocumentRegistry:openDocument(sample_epub),
         }
     end)
 
     teardown(function()
-        readerui:handleEvent(Event:new("SetRotationMode", Screen.DEVICE_ROTATED_UPRIGHT))
-        readerui:onClose()
-    end)
-
-    after_each(function()
-        UIManager:quit()
+        readerui:handleEvent(Event:new("ChangeScreenMode", "portrait"))
     end)
 
     it("should get screenshot in portrait", function()
-        local name = DataStorage:getDataDir() .. "/screenshots/reader_screenshot_portrait.png"
-        readerui:handleEvent(Event:new("SetRotationMode", Screen.DEVICE_ROTATED_UPRIGHT))
+        local name = "screenshots/reader_screenshot_portrait.png"
+        readerui:handleEvent(Event:new("ChangeScreenMode", "portrait"))
+        UIManager:quit()
         UIManager:show(readerui)
-        fastforward_ui_events()
+        UIManager:scheduleIn(1, function() UIManager:close(readerui) end)
+        UIManager:run()
         readerui.screenshot:onScreenshot(name)
         assert.truthy(lfs.attributes(name, "mode"))
+        UIManager:quit()
     end)
 
     it("should get screenshot in landscape", function()
-        local name = DataStorage:getDataDir() .. "/screenshots/reader_screenshot_landscape.png"
-        readerui:handleEvent(Event:new("SetRotationMode", Screen.DEVICE_ROTATED_CLOCKWISE))
+        local name = "screenshots/reader_screenshot_landscape.png"
+        readerui:handleEvent(Event:new("ChangeScreenMode", "landscape"))
+        UIManager:quit()
         UIManager:show(readerui)
-        fastforward_ui_events()
+        UIManager:scheduleIn(2, function() UIManager:close(readerui) end)
+        UIManager:run()
         readerui.screenshot:onScreenshot(name)
         assert.truthy(lfs.attributes(name, "mode"))
+        UIManager:quit()
     end)
 end)
