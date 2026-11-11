@@ -18,9 +18,10 @@ Status: runs in PPSSPP (24 MB PSP-1000 profile): file manager, EPUB/TXT/HTML thr
 The modules do not contain FreeType, libjpeg, zlib, libc, ...: they call the copies in the launcher. Their `malloc`
 is the launcher's heap.
 
-Memory: the launcher keeps part of the free memory outside its C heap for modules (3.7 MB on 24 MB models, 10 MB on
-52 MB models; see `launcher/heap.c`). On a PSP-1000 this means one engine at a time: if a module does not fit, opening
-the document fails with "not enough memory left for modules" and KOReader has to be restarted to switch engines.
+Memory: the launcher keeps part of the free memory outside its C heap for modules (2.5 MB on 24 MB models, 10 MB on
+52 MB models; see `launcher/heap.c`). On a 24 MB PSP-1000, EPUB, FB2, HTML and TXT work (`cre.prx`), PDF does not
+(`mupdf.prx` does not fit beside the Lua heap; tested only at 52 MB, where PDF renders). If a module does not fit,
+opening the document fails with "not enough memory left for modules".
 
 ## How modules work
 

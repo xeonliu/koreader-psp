@@ -5,7 +5,7 @@
 #include <stddef.h>
 
 #ifndef KO_PSP_MODULE_RESERVE_KB
-#define KO_PSP_MODULE_RESERVE_KB 3700
+#define KO_PSP_MODULE_RESERVE_KB 2560   /* 24 MB: cre.prx fits; mupdf.prx needs the 52 MB profile */
 #endif
 #ifndef KO_PSP_MODULE_RESERVE_LARGE_KB
 #define KO_PSP_MODULE_RESERVE_LARGE_KB 10240

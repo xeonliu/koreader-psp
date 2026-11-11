@@ -23,7 +23,7 @@
  *  - 52 MB models (PSP-2000 and later, PSP Go): room for all of them.
  * heap.c creates the heap on the first allocation and picks the reserve then. */
 #ifndef KO_PSP_MODULE_RESERVE_KB
-#define KO_PSP_MODULE_RESERVE_KB 3700
+#define KO_PSP_MODULE_RESERVE_KB 2560
 #endif
 #ifndef KO_PSP_MODULE_RESERVE_LARGE_KB
 #define KO_PSP_MODULE_RESERVE_LARGE_KB 10240
