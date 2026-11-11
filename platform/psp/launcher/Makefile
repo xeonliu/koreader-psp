@@ -38,7 +38,7 @@ OBJS = main.o symtab.o psp_posix_stubs.o posix_stubs_gen.o $(KO_OBJS) $(if $(SCR
 PSPSDK ?= $(shell psp-config --pspsdk-path)
 INCDIR = $(STAGING)/include/luajit-2.1
 CFLAGS = -O2 -G0 -Wall $(shell psp-pkg-config --cflags sdl3) -Wno-unused-function \
-  $(if $(ARG1),-DKO_PSP_ARG1='"$(ARG1)"') \
+  $(if $(FORCE_LOG),-DKO_PSP_FORCE_LOG) $(if $(PRESS),-DKO_PSP_PRESS='"$(PRESS)"') $(if $(ARG1),-DKO_PSP_ARG1='"$(ARG1)"') \
   $(if $(SCRIPT),-DKO_PSP_SCRIPT='"$(SCRIPT)"') \
   $(if $(OPEN),-DKO_PSP_OPEN='"$(OPEN)"') \
   $(if $(SCREENSHOTS),-DKO_PSP_SCREENSHOTS -DKO_PSP_SCREENSHOTS_FIRST_MS=$(or $(SHOT_FIRST),20000) -DKO_PSP_SCREENSHOTS_INTERVAL_MS=$(or $(SHOT_INTERVAL),10000) -DKO_PSP_SCREENSHOTS_COUNT=$(or $(SHOT_COUNT),6))

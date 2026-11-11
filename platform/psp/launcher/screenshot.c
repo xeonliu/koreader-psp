@@ -40,6 +40,31 @@ static void dump_framebuffer(const char *path) {
     fflush(stdout);
 }
 
+#ifdef KO_PSP_PRESS
+/* Scripted button presses for emulator runs: KO_PSP_PRESS is "ms:button,ms:button,..." (SDL_GamepadButton numbers,
+ * times since start). They are pushed as SDL gamepad events, so they take the same path as the real buttons. */
+#include <SDL3/SDL.h>
+#include <stdlib.h>
+static int press_thread(SceSize args, void *argp) {
+    (void)args; (void)argp;
+    const char *p = KO_PSP_PRESS; int now = 0;
+    while (*p) {
+        int at = strtol(p, (char **)&p, 10); if (*p == ':') p++;
+        int button = strtol(p, (char **)&p, 10); if (*p == ',') p++;
+        if (at > now) { sceKernelDelayThread((at - now) * 1000); now = at; }
+        for (int down = 1; down >= 0; down--) {
+            SDL_Event e; memset(&e, 0, sizeof e);
+            e.type = down ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
+            e.gbutton.timestamp = SDL_GetTicksNS(); e.gbutton.button = button; e.gbutton.down = down;
+            SDL_PushEvent(&e);
+            sceKernelDelayThread(100 * 1000); now += 100;
+        }
+        printf("press: button %d at %d ms\n", button, at);
+    }
+    return 0;
+}
+#endif
+
 static int shot_thread(SceSize args, void *argp) {
     (void)args; (void)argp;
     sceKernelDelayThread(first_ms * 1000);
@@ -57,6 +82,10 @@ static int shot_thread(SceSize args, void *argp) {
 
 void ko_start_screenshots(int first, int interval, int n) {
     first_ms = first; interval_ms = interval; count = n;
+#ifdef KO_PSP_PRESS
+    int pt = sceKernelCreateThread("ko_press", press_thread, 0x30, 0x4000, 0, NULL);
+    if (pt >= 0) sceKernelStartThread(pt, 0, NULL);
+#endif
     int th = sceKernelCreateThread("ko_shots", shot_thread, 0x30, 0x4000, 0, NULL);
     if (th >= 0) sceKernelStartThread(th, 0, NULL);
 }

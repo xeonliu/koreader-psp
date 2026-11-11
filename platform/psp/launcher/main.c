@@ -13,6 +13,32 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pspkernel.h>
+#include <pspsdk.h>
+#include <pspdebug.h>
+
+/* KOReader recurses deeply (CREngine's DOM/rendering, Lua's C calls): the default 256 KB main stack is too small. */
+PSP_MAIN_THREAD_STACK_SIZE_KB(1024);
+/* Leave 2 MB outside the C heap for thread stacks and whatever the firmware allocates later. */
+PSP_HEAP_THRESHOLD_SIZE_KB(2048);
+
+/* On a memory stick, stdout/stderr go to koreader.log next to the EBOOT. Each write opens, appends and closes the file, so the
+ * log is complete on the card even if the PSP crashes or is switched off right after. */
+static char ko_log_path[300];
+static int ko_log_write(void *cookie, const char *buf, int len) {
+    (void)cookie;
+    SceUID fd = sceIoOpen(ko_log_path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0666);
+    if (fd >= 0) { sceIoWrite(fd, buf, len); sceIoClose(fd); }
+    return len;
+}
+static void ko_log_to_file(const char *dir) {
+    snprintf(ko_log_path, sizeof ko_log_path, "%skoreader.log", dir);
+    sceIoRemove(ko_log_path);
+    FILE *f = funopen(NULL, NULL, ko_log_write, NULL, NULL);
+    if (!f) return;
+    setvbuf(f, NULL, _IOLBF, 1024);
+    stdout = f; stderr = f;
+}
 
 struct psp_luaopen { const char *name; int (*fn)(void *); };
 extern const struct psp_luaopen psp_luaopen_table[];
@@ -38,6 +64,10 @@ void ko_start_screenshots(int first, int interval, int n);
 static void show_error(const char *msg) {
     printf("KOREADER-PSP FATAL: %s\n", msg);
     fflush(stdout);
+    /* Also put it on the screen for a while: on hardware nobody sees stdout. */
+    pspDebugScreenInit();
+    pspDebugScreenPrintf("KOReader stopped:\n\n%s\n\n(also in koreader.log)\n", msg);
+    sceKernelDelayThread(15 * 1000 * 1000);
 }
 
 int main(int argc, char *argv[]) {
@@ -48,10 +78,19 @@ int main(int argc, char *argv[]) {
         char *slash = strrchr(dir, '/');
         if (slash) { slash[1] = '\0'; chdir(dir); }
     }
-    printf("KOReader PSP launcher: cwd from '%s'\n", dir);
+    /* The Allegrex traps on FPU exceptions (0/0, NaN to int, ...) unless they are masked; PPSSPP never traps. */
+    pspSdkDisableFPUExceptions();
+#ifndef KO_PSP_FORCE_LOG
+    if (strncmp(dir, "ms0:", 4) == 0 || strncmp(dir, "ef0:", 4) == 0)
+#endif
+        ko_log_to_file(dir);
+    printf("KOReader PSP launcher: cwd from '%s'; %d KB free (largest block %d KB)\n", dir,
+           (int)(sceKernelTotalFreeMemSize() / 1024), (int)(sceKernelMaxFreeMemSize() / 1024));
     /* The PSP has no environment: provide what KOReader expects. */
     setenv("HOME", dir[0] ? dir : ".", 0);
     setenv("TZ", "UTC", 0);
+    /* No touch screen: KOReader's key-driven mode (focus navigation with the D-pad, see device/sdl/gamepad.lua). */
+    setenv("DISABLE_TOUCH", "1", 0);
 
 #ifdef KO_PSP_SCREENSHOTS
     ko_start_screenshots(KO_PSP_SCREENSHOTS_FIRST_MS, KO_PSP_SCREENSHOTS_INTERVAL_MS, KO_PSP_SCREENSHOTS_COUNT);

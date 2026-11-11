@@ -29,8 +29,8 @@ For automated screenshots, build with `CFLAGS="... -DSMOKE_AUTOEXIT_MS=3000"` (s
 
 ## KOReader on the PSP (`launcher/`)
 
-`launcher/` builds the real thing: one `EBOOT.PBP` (~27 MB) holding a static LuaJIT, KOReader's own Lua (`reader.lua` and friends),
-and every C dependency (FreeType, HarfBuzz, MuPDF, CREngine, DjVuLibre, k2pdfopt/Leptonica/Tesseract, libarchive, sqlite, ...).
+`launcher/` builds the real thing: one static `EBOOT.PBP` (~16 MB) holding LuaJIT and the C dependencies of the core reader
+(CREngine, FreeType, HarfBuzz, libarchive, image decoders, sqlite, ...). KOReader's own Lua (`reader.lua` and friends) is staged next to it.
 SDL3 (pspdev's) provides the 480x272 screen and the gamepad; KOReader's existing SDL device code is reused unchanged.
 
     # 1. koreader-base: toolchain + all thirdparty libraries (needs pspdev in PATH, PSPDEV set)
@@ -54,15 +54,31 @@ How it fits together:
 * `koreader-base/ffi-cdecl/posix_h_other_mipsel.lua` holds the PSP's C declarations (types/constants), merged into `ffi/posix_h.lua`.
 * No network: `socket`, `ssl` and `mime` are small Lua stand-ins (`luastubs/`), so network features fail cleanly.
 
-### Status (all verified in PPSSPP only; nothing has run on real hardware)
-Working: boot, file manager, EPUB (CREngine), plain text (CREngine), PDF (MuPDF).
+### Status (verified in PPSSPP only; not yet confirmed on real hardware)
+The build is the core reader: one static `EBOOT.PBP` (~16 MB) with CREngine. It needs a PSP-2000 or later (it asks for the large
+memory layout); a PSP-1000 does not have enough RAM.
+
+Working in PPSSPP: boot, quickstart guide, file manager, EPUB, MOBI, plain text, menus, page turns with the buttons.
+Not built: PDF (MuPDF), DjVu, k2pdfopt/OCR, network.
+
+Buttons (KOReader's own SDL gamepad map, `frontend/device/sdl/gamepad.lua`): D-pad/analog stick = move focus, Cross = select,
+Circle = back, Triangle = context menu, Start = menu, L/R = previous/next page.
+
+For real hardware the launcher
+* masks FPU exceptions (the Allegrex traps on them, PPSSPP does not),
+* uses a 1 MB main stack and keeps 2 MB outside the C heap for thread stacks,
+* writes stdout/stderr to `koreader.log` next to the EBOOT when run from `ms0:`/`ef0:` (each line is flushed to the card, so the
+  log survives a crash), and shows a fatal Lua error on screen for 15 seconds.
+
+To make a folder for the memory stick, copy the stage directory with links resolved (`cp -rL stage KOReader`), drop
+`resources/fonts` (the same files as `fonts/`), and put it in `ms0:/PSP/GAME/`.
+
 Known problems:
-* `leaves.epub` and DjVu crash with wild memory accesses (DjVuLibre uses C++ exceptions; unwinding probably does not work in the PRX).
-* sqlite databases cannot be created (statistics, cover browser): `ljsqlite3[cantopen]`.
-* Memory: the EBOOT is 27 MB and KOReader uses a lot of RAM; PPSSPP is run in large-memory mode. A PSP-1000 will not have enough.
-* Speed has not been measured on hardware (the VM does doubles in software).
-* Not built: libressl, libzmq/czmq, luasocket (stand-in used), sdcv (needs GLib).
-* Input: the gamepad is read through KOReader's SDL device layer; no PSP-specific key map yet.
+* sqlite databases cannot be created (statistics, cover browser): `ljsqlite3[cantopen]`. The plugins fail to load; reading is unaffected.
+* Speed has not been measured on hardware (the VM does doubles in software); opening a book takes 5-15 s in PPSSPP.
+
+Extra development switches: `PRESS=ms:button,ms:button` (scripted gamepad presses, with `SCREENSHOTS=1`), `FORCE_LOG=1` (write
+`koreader.log` in the emulator too).
 
 ## LuaJIT (Plan A): runs in PPSSPP
 
