@@ -42,9 +42,9 @@ local Screen = Device.screen
 local T = require("ffi/util").template
 
 local function restoreScreenMode()
-    local screen_mode = G_reader_settings:readSetting("fm_screen_mode")
+    local screen_mode = G_reader_settings:readSetting("fm_screen_mode") or Screen:getNativeScreenMode()
     if Screen:getScreenMode() ~= screen_mode then
-        Screen:setScreenMode(screen_mode or "portrait")
+        Screen:setScreenMode(screen_mode)
     end
 end
 

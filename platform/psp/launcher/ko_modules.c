@@ -57,15 +57,21 @@ struct ko_module *ko_module_load(const char *name) {
     if (nmodules >= MAX_MODULES) { snprintf(last_error, sizeof last_error, "too many modules"); return NULL; }
     /* Dependencies first. */
     for (int i = 0; libmap[i].lib; i++) {
-        if (strcmp(libmap[i].module, name) != 0 || !libmap[i].deps) continue;
+        if (!libmap[i].module || strcmp(libmap[i].module, name) != 0 || !libmap[i].deps) continue;
         char deps[96]; snprintf(deps, sizeof deps, "%s", libmap[i].deps);
         for (char *d = strtok(deps, ","); d; d = strtok(NULL, ",")) if (!ko_module_load(d)) return NULL;
         break;
     }
     char path[320];
     snprintf(path, sizeof path, "%s%s.prx", module_dir, name);
+    printf("[modules] loading %s: %d KB free outside the heap (largest block %d KB)\n", path,
+           (int)(sceKernelTotalFreeMemSize() / 1024), (int)(sceKernelMaxFreeMemSize() / 1024));
     SceUID id = sceKernelLoadModule(path, 0, NULL);
-    if (id < 0) { snprintf(last_error, sizeof last_error, "cannot load %s (0x%08x)", path, (unsigned)id); return NULL; }
+    if (id < 0) {
+        snprintf(last_error, sizeof last_error, "cannot load %s (0x%08x%s)", path, (unsigned)id,
+                 (unsigned)id == 0x800200d9u ? ", not enough memory left for modules" : "");
+        return NULL;
+    }
     struct ko_module_link link = { KO_PRX_MAGIC, ko_resolve, NULL, 0, NULL };
     struct ko_module_link *linkp = &link;
     int status = -1;
@@ -95,7 +101,7 @@ static int libmap_find(const char *libname) {
 
 struct ko_module *ko_module_for_library(const char *libname) {
     int i = libmap_find(libname);
-    if (i < 0) { last_error[0] = '\0'; return NULL; }
+    if (i < 0 || !libmap[i].module) { last_error[0] = '\0'; return NULL; }
     return ko_module_load(libmap[i].module);
 }
 
@@ -105,8 +111,10 @@ void *ko_module_symbol(struct ko_module *m, const char *name) { return table_loo
 #define STATIC_HANDLE ((void *)(long)1)
 
 void *lj_psp_loadlib(const char *name, const char **err) {
-    if (libmap_find(name) < 0) return STATIC_HANDLE;           /* linked into the main program */
-    struct ko_module *m = ko_module_for_library(name);
+    int i = libmap_find(name);
+    if (i < 0) { snprintf(last_error, sizeof last_error, "no such library on the PSP"); *err = last_error; return NULL; }
+    if (!libmap[i].module) return STATIC_HANDLE;               /* linked into the main program */
+    struct ko_module *m = ko_module_load(libmap[i].module);
     if (!m) { *err = last_error; return NULL; }
     return m;
 }

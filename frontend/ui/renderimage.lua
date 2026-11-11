@@ -54,8 +54,61 @@ function RenderImage:renderImageData(data, size, want_frames, width, height)
         end
         -- fallback to rendering with MuPDF
     end
+    if self:preferLightDecoders() then
+        local image = self:renderImageDataLight(buffer, size, width, height)
+        if image then
+            return image
+        end
+    end
     logger.dbg("renderImageData: using MuPDF")
     return self:renderImageDataWithMupdf(data, size, width, height)
+end
+
+--- Whether PNG/JPEG should be decoded with lodepng/turbojpeg instead of MuPDF.
+-- Set (KO_LIGHT_IMAGE_DECODERS) on platforms where MuPDF is a large module that should not be loaded just to draw
+-- the UI icons; once MuPDF is loaded anyway, it is used.
+function RenderImage:preferLightDecoders()
+    return os.getenv("KO_LIGHT_IMAGE_DECODERS") ~= nil and package.loaded["ffi/mupdf"] == nil
+end
+
+--- Renders PNG or JPEG data as a BlitBuffer with lodepng / turbojpeg
+--
+-- @tparam buffer cdata (unsigned char*) with image bytes
+-- @int size size of data
+-- @int width requested width
+-- @int height requested height
+-- @treturn BlitBuffer or nil when the data is neither PNG nor JPEG (or broken)
+function RenderImage:renderImageDataLight(buffer, size, width, height)
+    local Blitbuffer = require("ffi/blitbuffer")
+    local bb
+    if size > 8 and buffer[0] == 0x89 and buffer[1] == 0x50 and buffer[2] == 0x4E and buffer[3] == 0x47 then
+        require("ffi/lodepng_h")
+        local lodepng = ffi.load("libs/liblodepng.so")
+        local out, w, h = ffi.new("unsigned char*[1]"), ffi.new("unsigned int[1]"), ffi.new("unsigned int[1]")
+        if lodepng.lodepng_decode32(out, w, h, buffer, size) ~= 0 then
+            return
+        end
+        bb = Blitbuffer.new(w[0], h[0], Blitbuffer.TYPE_BBRGB32, out[0])
+        bb:setAllocated(1) -- free the decoded pixels with the BlitBuffer
+    elseif size > 3 and buffer[0] == 0xFF and buffer[1] == 0xD8 then
+        if not Pic then Pic = require("ffi/pic") end
+        local ok, doc = pcall(Pic.openJPGDocumentFromMem, ffi.string(buffer, size))
+        if not ok or not doc then
+            return
+        end
+        bb = doc.image_bb
+    else
+        return
+    end
+    if width and height then
+        width, height = math.floor(width), math.floor(height)
+        if bb:getWidth() ~= width or bb:getHeight() ~= height then
+            local scaled_bb = bb:scale(width, height)
+            bb:free()
+            bb = scaled_bb
+        end
+    end
+    return bb
 end
 
 --- Renders image data as a BlitBuffer with MuPDF
@@ -178,7 +231,7 @@ function RenderImage:scaleBlitBuffer(bb, width, height, free_orig_bb)
     end
     logger.dbg("RenderImage:scaleBlitBuffer: scaling")
     local scaled_bb
-    if G_reader_settings:isTrue("legacy_image_scaling") then
+    if G_reader_settings:isTrue("legacy_image_scaling") or self:preferLightDecoders() then
         -- Uses "simple nearest neighbour scaling"
         scaled_bb = bb:scale(width, height)
     else

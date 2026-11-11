@@ -698,9 +698,9 @@ function ReaderView:onReadSettings(config)
     local screen_mode
     self.render_mode = config:readSetting("render_mode") or 0
     if self.ui.document.info.has_pages then
-        screen_mode = config:readSetting("screen_mode") or G_reader_settings:readSetting("kopt_screen_mode") or "portrait"
+        screen_mode = config:readSetting("screen_mode") or G_reader_settings:readSetting("kopt_screen_mode") or Screen:getNativeScreenMode()
     else
-        screen_mode = config:readSetting("screen_mode") or G_reader_settings:readSetting("copt_screen_mode") or "portrait"
+        screen_mode = config:readSetting("screen_mode") or G_reader_settings:readSetting("copt_screen_mode") or Screen:getNativeScreenMode()
     end
     if screen_mode then
         Screen:setScreenMode(screen_mode)

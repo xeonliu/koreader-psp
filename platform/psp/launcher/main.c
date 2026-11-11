@@ -13,7 +13,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pspmoduleinfo.h>
 #include "ko_modules.h"
+
+/* The C heap takes all free memory except this reserve, which is what the PRX modules (code + data; their malloc()
+ * calls land in this program's heap) and thread stacks are loaded into. */
+#ifndef KO_PSP_MODULE_RESERVE_KB
+#define KO_PSP_MODULE_RESERVE_KB 2560
+#endif
+PSP_HEAP_THRESHOLD_SIZE_KB(KO_PSP_MODULE_RESERVE_KB);
+PSP_MAIN_THREAD_STACK_SIZE_KB(512);
 
 struct psp_luaopen { const char *name; int (*fn)(void *); };
 extern const struct psp_luaopen psp_luaopen_table[];
@@ -54,6 +63,8 @@ int main(int argc, char *argv[]) {
     setenv("TZ", "UTC", 0);
     setenv("EMULATE_READER_W", "480", 0);   /* the PSP screen */
     setenv("EMULATE_READER_H", "272", 0);
+    setenv("KO_LOW_MEMORY", "1", 0);             /* small CREngine in-memory caches */
+    setenv("KO_LIGHT_IMAGE_DECODERS", "1", 0);   /* UI icons without loading the MuPDF module */
     { char mdir[300]; snprintf(mdir, sizeof mdir, "%smodules/", dir); ko_modules_set_dir(mdir); }
 #ifdef KO_PSP_SCREENSHOTS
     ko_start_screenshots(KO_PSP_SCREENSHOTS_FIRST_MS, KO_PSP_SCREENSHOTS_INTERVAL_MS, KO_PSP_SCREENSHOTS_COUNT);
@@ -79,6 +90,7 @@ int main(int argc, char *argv[]) {
 #ifdef KO_PSP_OPEN
     lua_pushstring(L, KO_PSP_OPEN); lua_rawseti(L, -2, k++);
 #endif
+    if (k == 1) { lua_pushstring(L, "."); lua_rawseti(L, -2, k++); }   /* no argument: browse the KOReader folder */
     lua_setglobal(L, "arg");
 
     lua_getglobal(L, "debug"); lua_getfield(L, -1, "traceback"); lua_remove(L, -2);
