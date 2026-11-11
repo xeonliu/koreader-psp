@@ -1,0 +1,160 @@
+# KOReader 2018.12 for the PSP: builds the libraries, the PRX modules and the EBOOT, and uploads a runnable folder
+# (as a zip) as a workflow artifact.
+#
+# Inputs (all are branches of xeonliu's repositories; change them with workflow_dispatch):
+#   this repo (koreader-psp)   claude/psp-2018-12-clean    the 2018 frontend + launcher (this checkout)
+#   koreader-base              claude/psp-2018-12-clean    the 2018 base: LuaJIT, CREngine/MuPDF modules, PRX toolkit
+#   koreader-base (modern)     claude/psp-porting-sdl-mm2bsa  prebuilt FreeType, HarfBuzz, libpng, ... (staging)
+#   koreader-psp (modern)      claude/psp-porting-sdl-mm2bsa  fonts and sample books (not in the 2018 tree)
+name: psp-2018
+
+on:
+  push:
+    branches: [claude/psp-2018-12-clean]
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: koreader-base branch with the 2018 PSP build
+        default: claude/psp-2018-12-clean
+      modern_base_ref:
+        description: koreader-base branch that provides the prebuilt libraries
+        default: claude/psp-porting-sdl-mm2bsa
+      assets_ref:
+        description: koreader-psp branch with fonts/ and test/ (sample books)
+        default: claude/psp-porting-sdl-mm2bsa
+
+permissions:
+  contents: read
+
+jobs:
+  prebuilt:
+    name: prebuilt libraries (modern koreader-base, PSP)
+    runs-on: ubuntu-latest
+    container: pspdev/pspdev:latest
+    env:
+      PSPDEV: /usr/local/pspdev
+    steps:
+      - name: Install host tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git python3 zip unzip cmake ninja-build make pkg-config gcc-multilib
+      - name: Check out koreader-base (modern PSP branch)
+        uses: actions/checkout@v4
+        with:
+          repository: xeonliu/koreader-base
+          ref: ${{ inputs.modern_base_ref || 'claude/psp-porting-sdl-mm2bsa' }}
+          path: modern-base
+          fetch-depth: 1
+      - name: Cache the prebuilt libraries
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: modern-base/build/psp
+          key: psp-prebuilt-${{ runner.os }}-${{ hashFiles('modern-base/**/CMakeLists.txt', 'modern-base/Makefile.defs') }}
+      - name: Build the prebuilt libraries
+        if: steps.cache.outputs.cache-hit != 'true'
+        working-directory: modern-base
+        run: |
+          make TARGET=psp setup
+          cd build/psp/cmake
+          # Some optional libraries may fail; the staging directory is what the 2018 build needs.
+          ninja -k0 all || true
+          test -d ../staging/lib && test -d ../staging/include
+      - name: Upload the prebuilt staging directory
+        uses: actions/upload-artifact@v4
+        with:
+          name: psp-prebuilt-staging
+          path: modern-base/build/psp/staging
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload the common Lua libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: psp-prebuilt-common
+          path: modern-base/build/psp/common
+          retention-days: 7
+          if-no-files-found: error
+
+  build:
+    name: KOReader 2018.12 PSP (EBOOT, modules, zip)
+    needs: prebuilt
+    runs-on: ubuntu-latest
+    container: pspdev/pspdev:latest
+    env:
+      PSPDEV: /usr/local/pspdev
+    steps:
+      - name: Install host tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git python3 zip unzip cmake ninja-build make pkg-config gcc-multilib
+      - name: Check out the frontend (this repository)
+        uses: actions/checkout@v4
+        with:
+          path: koreader
+          fetch-depth: 1
+      - name: Check out koreader-base (2018 PSP build)
+        uses: actions/checkout@v4
+        with:
+          repository: xeonliu/koreader-base
+          ref: ${{ inputs.base_ref || 'claude/psp-2018-12-clean' }}
+          path: base
+          fetch-depth: 1
+      - name: Check out fonts and sample books (modern koreader-psp)
+        uses: actions/checkout@v4
+        with:
+          repository: xeonliu/koreader-psp
+          ref: ${{ inputs.assets_ref || 'claude/psp-porting-sdl-mm2bsa' }}
+          path: assets
+          sparse-checkout: |
+            resources/fonts
+            test
+          fetch-depth: 1
+      - name: Download the prebuilt libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: psp-prebuilt-staging
+          path: prebuilt/staging
+      - name: Download the common Lua libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: psp-prebuilt-common
+          path: prebuilt/common
+      - name: Build LuaJIT, libkopsp, blitbuffer, serialize, CREngine and MuPDF
+        working-directory: base
+        run: |
+          make -f Makefile.psp PREBUILT="$GITHUB_WORKSPACE/prebuilt/staging" all cre mupdf
+      - name: Build the launcher EBOOT
+        working-directory: koreader/platform/psp/launcher
+        run: |
+          make BASE="$GITHUB_WORKSPACE/base" PREBUILT="$GITHUB_WORKSPACE/prebuilt/staging"
+      - name: Stage the runnable folder
+        working-directory: koreader
+        env:
+          KO_PSP_FONTS: ${{ github.workspace }}/assets/resources/fonts
+          KO_PSP_SAMPLES: ${{ github.workspace }}/assets/test
+          KO_PSP_VERSION: v2018.12-psp-${{ github.sha }}
+        run: |
+          platform/psp/stage.sh "$GITHUB_WORKSPACE/out/KOReader" "$GITHUB_WORKSPACE/base" "$GITHUB_WORKSPACE/prebuilt/common"
+          cd "$GITHUB_WORKSPACE/out/KOReader"
+          rm -f fonts/noto/NotoSansCJK* modules/kotest.prx
+          rm -rf plugins/coverbrowser.koplugin plugins/statistics.koplugin
+          cp "$GITHUB_WORKSPACE/koreader/platform/psp/README.md" README-PSP.md
+      - name: Package the zip
+        run: |
+          cd "$GITHUB_WORKSPACE/out"
+          zip -q -r -9 "KOReader-2018.12-PSP-${GITHUB_SHA::7}.zip" KOReader
+          du -sh KOReader KOReader/modules
+          ls -la KOReader/EBOOT.PBP KOReader/modules
+      - name: Upload the zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: KOReader-2018.12-PSP-${{ github.sha }}
+          path: out/KOReader-2018.12-PSP-*.zip
+          retention-days: 30
+          if-no-files-found: error
+      - name: Upload the unpacked folder (for PPSSPP)
+        uses: actions/upload-artifact@v4
+        with:
+          name: KOReader-2018.12-PSP-folder-${{ github.sha }}
+          path: out/KOReader
+          retention-days: 7
