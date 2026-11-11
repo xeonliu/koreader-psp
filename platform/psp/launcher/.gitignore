@@ -1,0 +1,8 @@
+EBOOT.PBP
+PARAM.SFO
+*.o
+*.elf
+*.prx
+module-imports.lst
+posix_stubs_gen.c
+symtab.c

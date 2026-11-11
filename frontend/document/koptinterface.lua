@@ -11,6 +11,11 @@ local serial = require("serialize")
 local util = require("ffi/util")
 local Screen = require("device").screen
 
+-- Reflow needs k2pdfopt, which some platforms don't have.
+local function isReflowing(doc)
+    return doc.configurable.text_wrap == 1 and not KOPTContext.unavailable
+end
+
 local KoptInterface = {
     ocrengine = "ocrengine",
     tessocr_data = DataStorage:getDataDir() .. "/data",
@@ -115,10 +120,13 @@ function KoptInterface:getContextHash(doc, pageno, bbox)
 end
 
 function KoptInterface:getPageBBox(doc, pageno)
-    if doc.configurable.text_wrap ~= 1 and doc.configurable.trim_page == 1 then
+    if KOPTContext.unavailable then
+        -- no auto-crop without k2pdfopt
+        return Document.getPageBBox(doc, pageno)
+    elseif not isReflowing(doc) and doc.configurable.trim_page == 1 then
         -- auto bbox finding
         return self:getAutoBBox(doc, pageno)
-    elseif doc.configurable.text_wrap ~= 1 and doc.configurable.trim_page == 2 then
+    elseif not isReflowing(doc) and doc.configurable.trim_page == 2 then
         -- semi-auto bbox finding
         return self:getSemiAutoBBox(doc, pageno)
     else
@@ -238,7 +246,7 @@ end
 get page dimensions
 --]]
 function KoptInterface:getPageDimensions(doc, pageno, zoom, rotation)
-    if doc.configurable.text_wrap == 1 then
+    if isReflowing(doc) then
         return self:getRFPageDimensions(doc, pageno, zoom, rotation)
     else
         return Document.getPageDimensions(doc, pageno, zoom, rotation)
@@ -268,7 +276,7 @@ function KoptInterface:getCoverPageImage(doc)
 end
 
 function KoptInterface:renderPage(doc, pageno, rect, zoom, rotation, gamma, render_mode)
-    if doc.configurable.text_wrap == 1 then
+    if isReflowing(doc) then
         return self:renderReflowedPage(doc, pageno, rect, zoom, rotation, render_mode)
     elseif doc.configurable.page_opt == 1 then
         return self:renderOptimizedPage(doc, pageno, rect, zoom, rotation, render_mode)
@@ -357,7 +365,7 @@ function KoptInterface:renderOptimizedPage(doc, pageno, rect, zoom, rotation, re
 end
 
 function KoptInterface:hintPage(doc, pageno, zoom, rotation, gamma, render_mode)
-    if doc.configurable.text_wrap == 1 then
+    if isReflowing(doc) then
         self:hintReflowedPage(doc, pageno, zoom, rotation, gamma, render_mode)
     elseif doc.configurable.page_opt == 1 then
         self:renderOptimizedPage(doc, pageno, nil, zoom, rotation, gamma, render_mode)
@@ -393,7 +401,7 @@ function KoptInterface:hintReflowedPage(doc, pageno, zoom, rotation, gamma, rend
 end
 
 function KoptInterface:drawPage(doc, target, x, y, rect, pageno, zoom, rotation, gamma, render_mode)
-    if doc.configurable.text_wrap == 1 then
+    if isReflowing(doc) then
         self:drawContextPage(doc, target, x, y, rect, pageno, zoom, rotation, render_mode)
     elseif doc.configurable.page_opt == 1 then
         self:drawContextPage(doc, target, x, y, rect, pageno, zoom, rotation, render_mode)
@@ -426,7 +434,7 @@ function KoptInterface:getTextBoxes(doc, pageno)
     -- if we have no text in original page then we will reuse native word boxes
     -- in reflow mode and find text boxes from scratch in non-reflow mode
     else
-        if doc.configurable.text_wrap == 1 then
+        if isReflowing(doc) then
             return self:getNativeTextBoxes(doc, pageno)
         else
             return self:getNativeTextBoxesFromScratch(doc, pageno)
@@ -576,7 +584,7 @@ function KoptInterface:getOCRWord(doc, pageno, wbox)
     if not Cache:check(self.ocrengine) then
         Cache:insert(self.ocrengine, OCREngine:new{ ocrengine = KOPTContext.new() })
     end
-    if doc.configurable.text_wrap == 1 then
+    if isReflowing(doc) then
         return self:getReflewOCRWord(doc, pageno, wbox.sbox)
     else
         return self:getNativeOCRWord(doc, pageno, wbox.sbox)
@@ -844,7 +852,7 @@ get word and word box from doc position
 function KoptInterface:getWordFromPosition(doc, pos)
     local text_boxes = self:getTextBoxes(doc, pos.page)
     if text_boxes then
-        if doc.configurable.text_wrap == 1 then
+        if isReflowing(doc) then
             return self:getWordFromReflowPosition(doc, text_boxes, pos)
         else
             return self:getWordFromNativePosition(doc, text_boxes, pos)
@@ -917,7 +925,7 @@ function KoptInterface:getLinkFromPosition(doc, pageno, pos)
     end
     local page_links = doc:getPageLinks(pageno)
     if page_links then
-        if doc.configurable.text_wrap == 1 then
+        if isReflowing(doc) then
             pos = self:reflowToNativePosTransform(doc, pageno, pos, {x=0.5, y=0.5})
         end
         for i = 1, #page_links do
@@ -962,7 +970,7 @@ get text and text boxes from screen positions
 function KoptInterface:getTextFromPositions(doc, pos0, pos1)
     local text_boxes = self:getTextBoxes(doc, pos0.page)
     if text_boxes then
-        if doc.configurable.text_wrap == 1 then
+        if isReflowing(doc) then
             return self:getTextFromReflowPositions(doc, text_boxes, pos0, pos1)
         else
             return self:getTextFromNativePositions(doc, text_boxes, pos0, pos1)
@@ -1024,7 +1032,7 @@ get text boxes from page positions
 --]]
 function KoptInterface:getPageBoxesFromPositions(doc, pageno, ppos0, ppos1)
     if not ppos0 or not ppos1 then return end
-    if doc.configurable.text_wrap == 1 then
+    if isReflowing(doc) then
         local spos0 = self:nativeToReflowPosTransform(doc, pageno, ppos0)
         local spos1 = self:nativeToReflowPosTransform(doc, pageno, ppos1)
         local page_boxes = self:getReflowedTextBoxes(doc, pageno)
@@ -1041,7 +1049,7 @@ end
 get page rect from native rect
 --]]
 function KoptInterface:nativeToPageRectTransform(doc, pageno, rect)
-    if doc.configurable.text_wrap == 1 then
+    if isReflowing(doc) then
         local pos0 = {
             x = rect.x + 5, y = rect.y + 5
         }

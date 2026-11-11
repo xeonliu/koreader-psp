@@ -7,7 +7,11 @@ local DrawContext = require("ffi/drawcontext")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
-local Mupdf = require("ffi/mupdf")
+-- Loaded on first use: MuPDF is big, and on some platforms (PSP) it lives in a module that is only loaded on demand.
+local Mupdf = setmetatable({}, {
+    __index = function(_, k) return require("ffi/mupdf")[k] end,
+    __newindex = function(_, k, v) require("ffi/mupdf")[k] = v end,
+})
 local Screen = require("device").screen
 local TimeVal = require("ui/timeval")
 local logger = require("logger")

@@ -60,6 +60,10 @@ function CreDocument:cacheInit()
     -- older devices can decrease that with setting:
     --   "cre_storage_size_factor"=1    (or 2, or 5)
     local default_cre_storage_size_factor = 20
+    if os.getenv("KO_LOW_MEMORY") then
+        -- e.g. the PSP (24 MB): keep crengine's own, small limits, so it packs its DOM instead of growing
+        default_cre_storage_size_factor = 1
+    end
     cre.initCache(DataStorage:getDataDir() .. "/cache/cr3cache",
         (G_reader_settings:readSetting("cre_disk_cache_max_size") or default_cre_disk_cache_max_size)*1024*1024,
         G_reader_settings:nilOrTrue("cre_compress_cached_data"),
