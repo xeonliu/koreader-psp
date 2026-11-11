@@ -14,14 +14,21 @@
 #include <string.h>
 #include <unistd.h>
 #include <pspmoduleinfo.h>
+#include <pspsysmem.h>
 #include "ko_modules.h"
 
-/* The C heap takes all free memory except this reserve, which is what the PRX modules (code + data; their malloc()
- * calls land in this program's heap) and thread stacks are loaded into. */
+/* The C heap takes all free memory except a reserve, which is what the PRX modules (code + data; their malloc()
+ * calls land in this program's heap) and thread stacks are loaded into.
+ *  - 24 MB models (PSP-1000): room for one document engine at a time (MuPDF is the biggest, ~3.3 MB).
+ *  - 52 MB models (PSP-2000 and later, PSP Go): room for all of them.
+ * heap.c creates the heap on the first allocation and picks the reserve then. */
 #ifndef KO_PSP_MODULE_RESERVE_KB
-#define KO_PSP_MODULE_RESERVE_KB 2560
+#define KO_PSP_MODULE_RESERVE_KB 3700
 #endif
-PSP_HEAP_THRESHOLD_SIZE_KB(KO_PSP_MODULE_RESERVE_KB);
+#ifndef KO_PSP_MODULE_RESERVE_LARGE_KB
+#define KO_PSP_MODULE_RESERVE_LARGE_KB 10240
+#endif
+int ko_free_at_boot_kb, ko_module_reserve_kb;   /* set by _sbrk() in heap.c */
 PSP_MAIN_THREAD_STACK_SIZE_KB(512);
 
 struct psp_luaopen { const char *name; int (*fn)(void *); };
@@ -58,7 +65,8 @@ int main(int argc, char *argv[]) {
         char *slash = strrchr(dir, '/');
         if (slash) { slash[1] = '\0'; chdir(dir); }
     }
-    printf("KOReader 2018.12 PSP launcher: cwd from '%s'\n", dir);
+    printf("KOReader 2018.12 PSP launcher: cwd from '%s'; %d KB free at boot, %d KB kept for modules\n", dir,
+           ko_free_at_boot_kb, ko_module_reserve_kb);
     setenv("HOME", dir[0] ? dir : ".", 0);
     setenv("TZ", "UTC", 0);
     setenv("EMULATE_READER_W", "480", 0);   /* the PSP screen */
