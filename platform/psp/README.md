@@ -67,6 +67,8 @@ Circle = back, Triangle = context menu, Start = menu, L/R = previous/next page.
 For real hardware the launcher
 * masks FPU exceptions (the Allegrex traps on them, PPSSPP does not),
 * uses a 1 MB main stack and keeps 2 MB outside the C heap for thread stacks,
+* pools file handles (`fdpool.c`): the firmware allows only about 16 open files and KOReader keeps many more open (fonts above
+  all), so read-only files get virtual handles and only the 6 most recently used are really open,
 * writes stdout/stderr to `koreader.log` next to the EBOOT when run from `ms0:`/`ef0:` (each line is flushed to the card, so the
   log survives a crash), and shows a fatal Lua error on screen for 15 seconds.
 
@@ -78,7 +80,7 @@ Known problems:
 * Speed has not been measured on hardware (the VM does doubles in software); opening a book takes 5-15 s in PPSSPP.
 
 Extra development switches: `PRESS=ms:button,ms:button` (scripted gamepad presses, with `SCREENSHOTS=1`), `FORCE_LOG=1` (write
-`koreader.log` in the emulator too).
+`koreader.log` in the emulator too), `MAX_OPEN=n` (refuse more than n open files, like the firmware does).
 
 ## LuaJIT (Plan A): runs in PPSSPP
 

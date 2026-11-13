@@ -2,6 +2,7 @@
 #   export PSPDEV=...; export PATH=$PSPDEV/bin:$PATH
 #   make BASE=/path/to/koreader-base       (after `make TARGET=psp` + ninja in koreader-base)
 all: EBOOT.PBP
+comma := ,
 
 BASE ?= $(error set BASE to the koreader-base checkout)
 BUILD := $(BASE)/build/psp
@@ -34,18 +35,18 @@ symtab.c: posix_stubs_gen.o $(KO_OBJS) $(STATIC_LIBS) $(BASE)/utils/gen-psp-symt
 	python3 $(BASE)/utils/gen-psp-symtab.py $@ --nm $(NM) --extra memcpy --extra memset $(LUA_DIRS) $(KO_OBJS) $(STATIC_LIBS) posix_stubs_gen.o psp_posix_stubs.o \
 	  $(PSPDEV)/psp/lib/libSDL3.a $(PSPDEV)/psp/lib/libc.a $(PSPDEV)/psp/lib/libm.a
 
-OBJS = main.o symtab.o psp_posix_stubs.o posix_stubs_gen.o $(KO_OBJS) $(if $(SCREENSHOTS),screenshot.o)
+OBJS = main.o fdpool.o symtab.o psp_posix_stubs.o posix_stubs_gen.o $(KO_OBJS) $(if $(SCREENSHOTS),screenshot.o)
 PSPSDK ?= $(shell psp-config --pspsdk-path)
 INCDIR = $(STAGING)/include/luajit-2.1
 CFLAGS = -O2 -G0 -Wall $(shell psp-pkg-config --cflags sdl3) -Wno-unused-function \
-  $(if $(FORCE_LOG),-DKO_PSP_FORCE_LOG) $(if $(PRESS),-DKO_PSP_PRESS='"$(PRESS)"') $(if $(ARG1),-DKO_PSP_ARG1='"$(ARG1)"') \
+  $(if $(MAX_OPEN),-DKO_PSP_MAX_OPEN=$(MAX_OPEN)) $(if $(FORCE_LOG),-DKO_PSP_FORCE_LOG) $(if $(PRESS),-DKO_PSP_PRESS='"$(PRESS)"') $(if $(ARG1),-DKO_PSP_ARG1='"$(ARG1)"') \
   $(if $(SCRIPT),-DKO_PSP_SCRIPT='"$(SCRIPT)"') \
   $(if $(OPEN),-DKO_PSP_OPEN='"$(OPEN)"') \
   $(if $(SCREENSHOTS),-DKO_PSP_SCREENSHOTS -DKO_PSP_SCREENSHOTS_FIRST_MS=$(or $(SHOT_FIRST),20000) -DKO_PSP_SCREENSHOTS_INTERVAL_MS=$(or $(SHOT_INTERVAL),10000) -DKO_PSP_SCREENSHOTS_COUNT=$(or $(SHOT_COUNT),6))
 CXXFLAGS = $(CFLAGS)
 ASFLAGS = $(CFLAGS)
 LIBDIR = $(STAGING)/lib
-LIBS = -Wl,--start-group $(STATIC_LIBS) $(PSPDEV)/psp/lib/libsqlite3.a -Wl,--end-group \
+LIBS = -Wl,--wrap=sceIoOpen,--wrap=sceIoClose,--wrap=sceIoRead,--wrap=sceIoWrite,--wrap=sceIoLseek -Wl,--start-group $(STATIC_LIBS) $(PSPDEV)/psp/lib/libsqlite3.a -Wl,--end-group \
        $(shell psp-pkg-config --libs sdl3) -lstdc++ -lsupc++ -lm -lpthread -lpspnet_inet
 BUILD_PRX = 1
 PSP_FW_VERSION = 661

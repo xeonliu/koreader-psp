@@ -150,6 +150,9 @@ local function collectFaceInfo(path)
             hbface:destroy()
         end
         ftsize:done()
+        -- Close the font file now rather than when the GC gets to it: scanning a large font
+        -- directory would otherwise run into the limit on open files on some systems (PSP).
+        if FT.releaseFace then FT.releaseFace(path, i) end
     end
     return res
 end

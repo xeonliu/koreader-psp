@@ -24,6 +24,7 @@ PSP_HEAP_THRESHOLD_SIZE_KB(2048);
 
 /* On a memory stick, stdout/stderr go to koreader.log next to the EBOOT. Each write opens, appends and closes the file, so the
  * log is complete on the card even if the PSP crashes or is switched off right after. */
+void ko_fdpool_init(void);
 static char ko_log_path[300];
 static int ko_log_write(void *cookie, const char *buf, int len) {
     (void)cookie;
@@ -80,6 +81,7 @@ int main(int argc, char *argv[]) {
     }
     /* The Allegrex traps on FPU exceptions (0/0, NaN to int, ...) unless they are masked; PPSSPP never traps. */
     pspSdkDisableFPUExceptions();
+    ko_fdpool_init();
 #ifndef KO_PSP_FORCE_LOG
     if (strncmp(dir, "ms0:", 4) == 0 || strncmp(dir, "ef0:", 4) == 0)
 #endif
